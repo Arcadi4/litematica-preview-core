@@ -1,0 +1,64 @@
+[package]
+name = "litematica-preview-core"
+version = "0.1.1"
+edition = "2021"
+description = "Bounded Minecraft schematic decoding and streaming mesh generation"
+license = "AGPL-3.0-only"
+repository = "https://github.com/Arcadi4/litematica-preview-core"
+keywords = ["minecraft", "schematic", "litematic", "meshing"]
+categories = ["graphics", "parser-implementations"]
+include = ["Cargo.toml", "src/**", "LICENSE", "ThirdParty/*.txt"]
+autotests = false
+
+[lib]
+name = "litematica_preview_core"
+crate-type = ["rlib"]
+
+
+[dependencies]
+nucleation = { version = "=0.10.14", default-features = false, features = ["meshing"] }
+schematic-mesher = "=0.2.0"
+quartz_nbt = { version = "0.2.9", features = ["preserve_order"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+regex = "1"
+serde_json = "1"
+rustc-hash = "2"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+lz4_flex = { version = "0.14", default-features = false, features = ["std"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+
+[[test]]
+name = "formats"
+path = "tests/formats.rs"
+
+[[test]]
+name = "inspect_memory"
+path = "tests/inspect_memory.rs"
+
+[[test]]
+name = "memory"
+path = "tests/memory.rs"
+
+[[test]]
+name = "meshing"
+path = "tests/meshing.rs"
+
+[[test]]
+name = "streaming"
+path = "tests/streaming.rs"
+
+# Debug info is the most expensive part of an unoptimized build. Line tables
+# keep a host's panic locations readable; dependency debug info is never
+# read, so none of it is generated. The release profile is unaffected.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# A bad schematic must not terminate a host process or poison a cached pack.
+panic = "unwind"
+strip = "debuginfo"
