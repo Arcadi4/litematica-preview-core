@@ -1,0 +1,35 @@
+name: Release
+on:
+  push:
+    tags:
+      - core-v*
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # A tag that disagrees with Cargo.toml would publish a version no
+      # consumer asked for, so the two are checked before anything is uploaded.
+      - name: Check the tag matches the manifest
+        run: |
+          tag="${GITHUB_REF_NAME#core-v}"
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [[ "$tag" != "$version" ]]; then
+            echo "::error::Tag core-v${tag} does not match crate version ${version}"
+            exit 1
+          fi
+      - name: Check format
+        run: cargo fmt -- --check
+      - name: Test
+        run: cargo test --locked
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
