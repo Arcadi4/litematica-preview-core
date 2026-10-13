@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The crate is platform-neutral and both consumers build on these targets,
+        # so a decode or mesher regression must not pass on only one of them.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check format
+        run: cargo fmt -- --check
+      - name: Test
+        run: cargo test --locked
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Read version
+        id: version
+        run: echo "version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')" >> "$GITHUB_OUTPUT"
+      # `cargo package` is exactly what a registry consumer receives, and it
+      # rewrites the manifest, so the packaged crate needs its own build.
+      - name: Package
+        run: cargo package --locked
+      - name: Test the packaged library
+        run: >-
+          cargo test --locked --lib
+          --manifest-path target/package/litematica-preview-core-${{ steps.version.outputs.version }}/Cargo.toml
