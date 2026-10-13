@@ -1,0 +1,22 @@
+LitematicaPreview Core
+Source baseline: 4bbeeae4ddfd5d4afa0280ba42f6a01bc8df7ab6.
+The source repository's LICENSE is GNU AGPL version 3 and is preserved.
+
+Nucleation and schematic-mesher power file decoding and meshing.
+Nucleation 0.10.14 is used unmodified from crates.io. src/litematic.rs,
+src/schematic.rs and src/meshing.rs contain application-owned readers/adapters
+adapted from its MIT-licensed implementation (Copyright (c) 2025 Schem-at); the
+full license is in ThirdParty/Nucleation-LICENSE.txt.
+schematic-mesher 0.2.0 is also used unmodified from crates.io. src/meshing/
+adapts its public builders for neighbor-aware chunks, stable texture atlases and
+mesh buffer ownership. Its license is in ThirdParty/schematic-mesher-LICENSE.txt.
+
+See ThirdParty/ for bundled dependency license texts.
+
+Third-party Minecraft resource pack
+------------------------------------
+
+No resource pack is bundled here. Consumers supply their own; the packs shipped
+with Minecraft are copyrighted by Mojang AB and/or its licensors and are not
+covered by the AGPL license in LICENSE. The opt-in `inspect_memory` diagnostic
+reads one from the path in `LP_MEMORY_PACK`.
