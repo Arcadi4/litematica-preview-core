@@ -590,7 +590,7 @@ checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "litematica-preview-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "image",

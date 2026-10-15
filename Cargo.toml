@@ -1,6 +1,6 @@
 [package]
 name = "litematica-preview-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Bounded Minecraft schematic decoding and streaming mesh generation"
 license = "AGPL-3.0-only"
