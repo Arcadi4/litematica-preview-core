@@ -4,13 +4,20 @@ use std::io::Write;
 
 use flate2::{write::GzEncoder, Compression};
 use litematica_preview_core::{
-    decode, load_chunks, mesh_config, parts, prepare, PreviewInfo, PreviewOptions,
+    decode, load_chunks, mesh_config, MeshBatch, PreviewInfo, PreviewOptions, VERTEX_STRIDE,
 };
 use nucleation::meshing::{MeshOutput, ResourcePackSource};
 use quartz_nbt::{NbtCompound, NbtList, NbtTag};
 
+#[path = "../src/batch/tests/support.rs"]
+mod support;
+
 #[path = "../src/meshing/tests/fixtures.rs"]
 mod fixtures;
+
+/// One triangle of decoded upload geometry, in the same shape the dense
+/// baseline uses.
+type Triangle = support::Triangle;
 
 fn triple(values: [i32; 3]) -> NbtCompound {
     let mut result = NbtCompound::new();
@@ -108,69 +115,81 @@ fn options() -> PreviewOptions {
     }
 }
 
-/// Canonicalize geometry independently of vertex/material indices, atlas
-/// placement, and nondeterministic mesh order.
-type Triangle = (u32, [[i64; 10]; 3]);
-fn triangles(mesh: &MeshOutput) -> Vec<Triangle> {
-    let mut result = Vec::new();
-    for (layer, _, alpha) in parts(mesh) {
-        for indices in layer.indices.chunks_exact(3) {
-            let mut vertices = [[0; 10]; 3];
-            for (vertex, &index) in vertices.iter_mut().zip(indices) {
-                let index = index as usize;
-                for (out, value) in vertex.iter_mut().zip(
-                    layer.positions[index]
-                        .into_iter()
-                        .chain(layer.normals[index])
-                        .chain(layer.colors[index]),
-                ) {
-                    *out = (f64::from(value) * 1_000_000.0).round() as i64;
-                }
-            }
-            vertices.sort_unstable();
-            result.push((alpha, vertices));
-        }
-    }
-    result.sort_unstable();
-    result
+/// A delivered preview: what the consumer received plus the geometry it must
+/// decode from the uploaded bytes.
+struct Preview {
+    info: PreviewInfo,
+    triangles: Vec<Triangle>,
+    batches: Vec<MeshBatch>,
 }
 
-fn preview(bytes: &[u8], pack: &ResourcePackSource) -> (PreviewInfo, Vec<Triangle>) {
-    let mut geometry = Vec::new();
+fn preview(bytes: &[u8], pack: &ResourcePackSource) -> Preview {
+    let mut batches = Vec::new();
     let info = load_chunks(
         bytes,
         pack,
         options(),
-        |preview| {
-            geometry.extend(triangles(&preview.mesh));
+        |batch| {
+            batches.push(batch);
             Ok(())
         },
         |_, _| Ok(()),
         || Ok(()),
     )
     .unwrap();
-    geometry.sort_unstable();
-    (info, geometry)
+    let mut triangles = Vec::new();
+    for batch in &batches {
+        support::assert_upload_ready(batch);
+        triangles.extend(support::packed_triangles(batch));
+    }
+    support::sort_triangles(&mut triangles);
+    Preview {
+        info,
+        triangles,
+        batches,
+    }
 }
 
-fn same_preview(actual: &(PreviewInfo, Vec<Triangle>), expected: &(PreviewInfo, Vec<Triangle>)) {
-    assert_eq!(actual.0.block_count, expected.0.block_count);
-    assert_eq!(actual.0.block_entity_count, expected.0.block_entity_count);
-    assert_eq!(actual.0.triangle_count, expected.0.triangle_count);
-    assert_eq!(actual.0.min, expected.0.min);
-    assert_eq!(actual.0.max, expected.0.max);
-    assert_eq!(actual.1, expected.1);
+/// The dense baseline: raw mesher output for the whole schematic, decoded
+/// independently of the packer.
+fn dense(bytes: &[u8], pack: &ResourcePackSource) -> (support::Summary, MeshOutput) {
+    let schematic = decode(bytes).unwrap();
+    let mesh = schematic.to_mesh(pack, &mesh_config()).unwrap();
+    let summary = support::summarize(
+        &mesh,
+        i64::from(schematic.total_blocks()),
+        schematic.get_block_entities_as_list().len() as i64,
+    );
+    (summary, mesh)
 }
 
-fn dense_preview(bytes: &[u8], pack: &ResourcePackSource) -> (PreviewInfo, Vec<Triangle>) {
-    let dense = decode(bytes).unwrap();
-    let result = prepare(
-        dense.to_mesh(pack, &mesh_config()).unwrap(),
-        i64::from(dense.total_blocks()),
-        dense.get_block_entities_as_list().len() as i64,
-    )
-    .unwrap();
-    (result.info, triangles(&result.mesh))
+fn same_preview(actual: &Preview, expected: &Preview) {
+    assert_eq!(actual.info.block_count, expected.info.block_count);
+    assert_eq!(
+        actual.info.block_entity_count,
+        expected.info.block_entity_count
+    );
+    assert_eq!(actual.info.triangle_count, expected.info.triangle_count);
+    assert_eq!(actual.info.min, expected.info.min);
+    assert_eq!(actual.info.max, expected.info.max);
+    assert_eq!(actual.triangles, expected.triangles);
+}
+
+/// Compare delivered geometry with the dense baseline through the documented
+/// quantization grids, so a lossy layout cannot hide a geometry regression.
+fn same_as_dense(actual: &Preview, expected: &(support::Summary, MeshOutput)) {
+    let (summary, mesh) = expected;
+    support::assert_same_summary(&actual.info, summary);
+    assert_eq!(
+        actual.batches.len(),
+        1,
+        "a whole-schematic baseline compares one unseparated batch"
+    );
+    support::assert_same_triangles(
+        &actual.triangles,
+        &support::dense_triangles(mesh),
+        &support::Tolerances::for_batch(&actual.batches[0]),
+    );
 }
 
 #[test]
@@ -191,11 +210,11 @@ fn reordered_fields_and_modified_utf8_preserve_public_preview() {
     )]));
     let pack = fixtures::test_pack();
     let actual = preview(&bytes, &pack);
-    assert_eq!(actual.0.block_count, 3);
-    assert_eq!(actual.0.triangle_count, 12);
-    assert_eq!(actual.0.min, [6.5, 1.5, -3.5]);
-    assert_eq!(actual.0.max, [7.5, 2.5, -2.5]);
-    same_preview(&actual, &dense_preview(&bytes, &pack));
+    assert_eq!(actual.info.block_count, 3);
+    assert_eq!(actual.info.triangle_count, 12);
+    assert_eq!(actual.info.min, [6.5, 1.5, -3.5]);
+    assert_eq!(actual.info.max, [7.5, 2.5, -2.5]);
+    same_as_dense(&actual, &dense(&bytes, &pack));
 }
 
 #[test]
@@ -241,10 +260,10 @@ fn three_and_nine_bit_states_cross_words_and_stream_read_boundaries() {
             nucleation::formats::litematic::to_litematic(&fixtures::schematic(&expected_blocks))
                 .unwrap();
         let actual = preview(&bytes, &pack);
-        assert_eq!(actual.0.block_count, 5, "{bits}-bit packed states");
-        assert_eq!(actual.0.triangle_count, 60);
-        assert_eq!(actual.0.min, [first_crossing as f32 - 0.5, -0.5, -0.5]);
-        assert_eq!(actual.0.max, [volume as f32 - 0.5, 0.5, 0.5]);
+        assert_eq!(actual.info.block_count, 5, "{bits}-bit packed states");
+        assert_eq!(actual.info.triangle_count, 60);
+        assert_eq!(actual.info.min, [first_crossing as f32 - 0.5, -0.5, -0.5]);
+        assert_eq!(actual.info.max, [volume as f32 - 0.5, 0.5, 0.5]);
         same_preview(&actual, &preview(&expected_bytes, &pack));
     }
 }
@@ -283,11 +302,11 @@ fn overlap_root(order: &[&str]) -> NbtCompound {
 fn region_order_keeps_default_first_sorted_others_and_additive_overlaps() {
     let pack = fixtures::test_pack();
     let expected = preview(&encoded(&overlap_root(&["default", "A", "M", "Z"])), &pack);
-    assert_eq!(expected.0.block_count, 8);
-    assert!((expected.0.min[0] + 0.5).abs() < 1e-5);
-    assert!((expected.0.min[1] + 0.5).abs() < 1e-5);
-    assert!((expected.0.min[2] + 0.5).abs() < 1e-5);
-    assert_eq!(expected.0.max[0], 11.5);
+    assert_eq!(expected.info.block_count, 8);
+    assert!((expected.info.min[0] + 0.5).abs() < 1e-5);
+    assert!((expected.info.min[1] + 0.5).abs() < 1e-5);
+    assert!((expected.info.min[2] + 0.5).abs() < 1e-5);
+    assert_eq!(expected.info.max[0], 11.5);
     for order in [
         ["default", "Z", "A", "M"],
         ["default", "M", "Z", "A"],
@@ -299,7 +318,7 @@ fn region_order_keeps_default_first_sorted_others_and_additive_overlaps() {
     // drop the other region's blocks or entity at the same world position.
     let alternate = preview(&encoded(&overlap_root(&["Z", "M", "A", "default"])), &pack);
     let canonical_alternate = preview(&encoded(&overlap_root(&["Z", "A", "M", "default"])), &pack);
-    assert_eq!(alternate.0.block_count, 8);
+    assert_eq!(alternate.info.block_count, 8);
     same_preview(&alternate, &canonical_alternate);
 }
 
@@ -326,7 +345,7 @@ fn entities_before_packed_states_keep_block_then_entity_precedence() {
         before.insert(name, value);
     }
     let actual = preview(&encoded(&root(vec![("main", before)])), &pack);
-    assert_eq!(actual.0.block_count, 1);
+    assert_eq!(actual.info.block_count, 1);
     same_preview(&actual, &expected);
 }
 
@@ -364,9 +383,9 @@ fn signed_extents_preserve_entities_at_block_positions_and_deduplicate_tiles_per
     let bytes = encoded(&root(vec![("negative", negative)]));
     let pack = fixtures::test_pack();
     let actual = preview(&bytes, &pack);
-    assert_eq!(actual.0.block_count, 4);
-    assert_eq!(actual.0.block_entity_count, 2);
-    assert_eq!(actual.0.min, [7.5, 18.5, 28.5]);
+    assert_eq!(actual.info.block_count, 4);
+    assert_eq!(actual.info.block_entity_count, 2);
+    assert_eq!(actual.info.min, [7.5, 18.5, 28.5]);
     let mut reference = fixtures::schematic(&[
         (8, 19, 29, "minecraft:stone"),
         (10, 20, 30, "minecraft:stone"),
@@ -387,7 +406,7 @@ fn signed_extents_preserve_entities_at_block_positions_and_deduplicate_tiles_per
     }
     let reference_bytes = nucleation::formats::litematic::to_litematic(&reference).unwrap();
     same_preview(&actual, &preview(&reference_bytes, &pack));
-    same_preview(&actual, &dense_preview(&bytes, &pack));
+    same_as_dense(&actual, &dense(&bytes, &pack));
 }
 
 fn single_block() -> NbtCompound {
@@ -594,8 +613,9 @@ fn threaded_preview(
             speed_first,
             ..PreviewOptions::default()
         },
-        |preview| {
-            chunks.push((preview.mesh.chunk_coord, triangles(&preview.mesh)));
+        |batch| {
+            support::assert_upload_ready(&batch);
+            chunks.push((batch.chunk_coord, support::packed_triangles(&batch)));
             Ok(())
         },
         |_, _| Ok(()),
@@ -764,12 +784,7 @@ fn pull_stream_cancellation_discards_prefetched_batches_before_publication() {
         }
     };
     let mut stream = MeshStream::new(&source, &pack, &mesh_config(), 2, &current).unwrap();
-    let first = prepare(
-        stream.next(&current).unwrap().unwrap(),
-        source.block_count(),
-        source.block_entity_count(),
-    )
-    .unwrap();
+    let first = stream.next(&current).unwrap().unwrap();
     assert_eq!(first.info.triangle_count, 12);
     assert_eq!(first.info.min, [-0.5; 3]);
     assert_eq!(first.info.max, [0.5; 3]);
@@ -779,4 +794,101 @@ fn pull_stream_cancellation_discards_prefetched_batches_before_publication() {
         stream.next(&current).err().as_deref(),
         Some("cancelled by caller")
     );
+}
+
+#[test]
+fn the_pull_stream_keeps_the_packed_layout_for_geometry_that_spans_chunks() {
+    use litematica_preview_core::{decode_with_options, MeshStream};
+    use nucleation::formats::limits::DecodeLimits;
+
+    let pack = fixtures::test_pack();
+    let model = fixtures::schematic(&[
+        (0, 0, 0, "minecraft:stone"),
+        (70_000, 0, 0, "minecraft:stone"),
+    ]);
+    let bytes = nucleation::formats::litematic::to_litematic(&model).unwrap();
+    let source = decode_with_options(
+        &bytes,
+        &DecodeLimits {
+            max_dimension: 70_001,
+            ..DecodeLimits::default()
+        },
+        PreviewOptions::default(),
+        || Ok(()),
+    )
+    .unwrap();
+    let current = || Ok::<(), String>(());
+    let mut stream = MeshStream::new(&source, &pack, &mesh_config(), 2, &current).unwrap();
+    let mut batches = Vec::new();
+    let mut triangles = Vec::new();
+    let mut atlas_published = false;
+    while let Some(batch) = stream.next(&current).unwrap() {
+        // A native host compiles one vertex layout, so the pull path never
+        // trades the packed 24-byte stride for the float fallback.
+        assert_eq!(batch.vertex_stride as usize, VERTEX_STRIDE);
+        support::assert_upload_ready(&batch);
+        if let Some(atlas) = batch.textures.iter().find(|t| t.index == 0) {
+            assert!(!atlas_published, "the atlas is published exactly once");
+            assert!(!atlas.pixels.is_empty());
+            atlas_published = true;
+        }
+        triangles.extend(support::packed_triangles(&batch));
+        batches.push(batch);
+    }
+    assert!(atlas_published, "the first batch carried the shared atlas");
+    assert_eq!(batches.len(), 2, "two blocks in two chunks");
+    support::sort_triangles(&mut triangles);
+
+    // Both blocks are isolated, so chunked and whole-schematic meshing agree.
+    let (summary, mesh) = dense(&bytes, &pack);
+    let grid = batches
+        .iter()
+        .flat_map(|batch| batch.extent)
+        .fold(0.0f64, |widest, extent| {
+            widest.max(f64::from(extent) / 65535.0)
+        })
+        + 1e-4;
+    support::assert_same_triangles(
+        &triangles,
+        &support::dense_triangles(&mesh),
+        &support::Tolerances {
+            position: [grid; 3],
+            normal: 1.0 / 127.0 + 1e-6,
+            color: 1.0 / 255.0 + 1e-6,
+        },
+    );
+    let total: u64 = batches.iter().map(|batch| batch.info.triangle_count).sum();
+    assert_eq!(total, summary.triangle_count, "chunked triangles aggregate");
+
+    // Publication through a batch has already transferred the atlas pixels.
+    let taken = stream.take_atlas();
+    assert_eq!(taken.index, 0);
+    assert!(taken.pixels.is_empty());
+}
+
+#[test]
+fn taking_the_atlas_first_leaves_no_batch_publishing_it() {
+    use litematica_preview_core::{decode_with_options, MeshStream};
+    use nucleation::formats::limits::DecodeLimits;
+
+    let pack = fixtures::test_pack();
+    let model = fixtures::schematic(&[(0, 0, 0, "minecraft:stone")]);
+    let bytes = nucleation::formats::litematic::to_litematic(&model).unwrap();
+    let source = decode_with_options(
+        &bytes,
+        &DecodeLimits::default(),
+        PreviewOptions::default(),
+        || Ok(()),
+    )
+    .unwrap();
+    let current = || Ok::<(), String>(());
+    let mut stream = MeshStream::new(&source, &pack, &mesh_config(), 1, &current).unwrap();
+    let atlas = stream.take_atlas();
+    assert!(!atlas.pixels.is_empty());
+    let batch = stream.next(&current).unwrap().unwrap();
+    assert!(
+        batch.textures.iter().all(|texture| texture.index != 0),
+        "a taken atlas is not published again"
+    );
+    assert!(stream.next(&current).unwrap().is_none());
 }

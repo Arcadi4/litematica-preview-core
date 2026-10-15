@@ -168,8 +168,8 @@ fn inspect_decoder_allocations() {
             &bytes,
             pack,
             PreviewOptions::default(),
-            |preview| {
-                first_chunk = Some(preview.info);
+            |batch| {
+                first_chunk = Some(batch.info);
                 callback_live = LIVE.load(SeqCst);
                 // Stop after the first chunk to measure preview startup only.
                 Err(STOP.into())

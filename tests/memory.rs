@@ -156,10 +156,10 @@ fn sparse_preview_avoids_dense_volume_and_explicit_decode_avoids_a_second_array(
             &bytes,
             &pack,
             PreviewOptions::default(),
-            |preview| {
+            |batch| {
                 chunks += 1;
-                assert_eq!(preview.info.block_count, 3);
-                assert_eq!(preview.info.block_entity_count, 0);
+                assert_eq!(batch.info.block_count, 3);
+                assert_eq!(batch.info.block_entity_count, 0);
                 Ok(())
             },
             |_, _| Ok(()),

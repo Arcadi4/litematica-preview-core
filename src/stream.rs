@@ -1,5 +1,9 @@
 //! Pull-based, ordered mesh windows borrowing the decoded source and resource pack.
-use crate::{meshing::ChunkMeshes, parallel, DecodedSchematic, Texture};
+//! Results always use the compact 24-byte vertex layout. Use `load_chunks`
+//! when wide unchunked geometry needs the float-position fallback.
+use crate::{
+    batch::BatchPacker, meshing::ChunkMeshes, parallel, DecodedSchematic, MeshBatch, Texture,
+};
 use nucleation::meshing::{MeshConfig, MeshOutput, ResourcePackSource};
 use std::collections::VecDeque;
 
@@ -11,6 +15,7 @@ pub struct MeshStream<'a> {
     next_batch: usize,
     pending: VecDeque<MeshOutput>,
     workers: usize,
+    packer: BatchPacker,
 }
 
 impl<'a> MeshStream<'a> {
@@ -25,12 +30,25 @@ impl<'a> MeshStream<'a> {
             return Err("The mesh worker window must be from 1 to 8.".into());
         }
         current()?;
-        let chunks = ChunkMeshes::from_source(&source.source, pack, config, current)?;
+        let mut chunks = ChunkMeshes::from_source(&source.source, pack, config, current)?;
+        let packer = BatchPacker::new(
+            Texture {
+                index: 0,
+                width: chunks.atlas_width(),
+                height: chunks.atlas_height(),
+                pixels: chunks.take_atlas_pixels(),
+                repeat: false,
+            },
+            source.block_count(),
+            source.block_entity_count(),
+            f32::INFINITY,
+        );
         Ok(Self {
             chunks,
             next_batch: 0,
             pending: VecDeque::new(),
             workers,
+            packer,
         })
     }
 
@@ -40,17 +58,13 @@ impl<'a> MeshStream<'a> {
 
     /// Transfer the atlas pixels once. Subsequent calls return empty pixels.
     pub fn take_atlas(&mut self) -> Texture {
-        Texture {
-            width: self.chunks.atlas_width(),
-            height: self.chunks.atlas_height(),
-            pixels: self.chunks.take_atlas_pixels(),
-        }
+        self.packer.take_atlas()
     }
 
     pub fn next(
         &mut self,
         current: &impl Fn() -> Result<(), String>,
-    ) -> Result<Option<MeshOutput>, String> {
+    ) -> Result<Option<MeshBatch>, String> {
         current()?;
         if self.next_batch == self.chunks.batch_count() {
             return Ok(None);
@@ -80,6 +94,8 @@ impl<'a> MeshStream<'a> {
         current()?;
         let output = self.pending.pop_front().expect("nonempty mesh window");
         self.next_batch += 1;
-        Ok(Some(output))
+        let batch = self.packer.pack(output)?;
+        current()?;
+        Ok(Some(batch))
     }
 }

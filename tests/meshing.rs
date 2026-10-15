@@ -1,5 +1,8 @@
-use litematica_preview_core::{load_chunks, PreviewOptions};
+use litematica_preview_core::{decode, load_chunks, mesh_config, PreviewOptions};
 use std::cell::Cell;
+
+#[path = "../src/batch/tests/support.rs"]
+mod support;
 
 #[path = "../src/meshing/tests/fixtures.rs"]
 mod fixtures;
@@ -7,7 +10,6 @@ use fixtures::{schematic, test_pack};
 
 #[test]
 fn public_preview_preserves_dense_fixture_counts_and_geometry_for_all_formats() {
-    use litematica_preview_core::{decode, mesh_config, prepare};
     use quartz_nbt::{NbtCompound, NbtTag};
 
     let fixture_root =
@@ -75,13 +77,10 @@ fn public_preview_preserves_dense_fixture_counts_and_geometry_for_all_formats() 
             if name.starts_with("Structure.") { 2 } else { 7 },
             "{name}"
         );
-        let expected = prepare(
-            dense.to_mesh(&pack, &mesh_config()).unwrap(),
-            block_count,
-            block_entity_count,
-        )
-        .unwrap()
-        .info;
+        let mesh = dense.to_mesh(&pack, &mesh_config()).unwrap();
+        let expected = support::summarize(&mesh, block_count, block_entity_count);
+        let expected_triangles = support::dense_triangles(&mesh);
+        let mut batches = Vec::new();
         let mut progress = Vec::new();
         let actual = load_chunks(
             &bytes,
@@ -90,7 +89,11 @@ fn public_preview_preserves_dense_fixture_counts_and_geometry_for_all_formats() 
                 chunk_size: None,
                 ..PreviewOptions::default()
             },
-            |_| Ok(()),
+            |batch| {
+                support::assert_upload_ready(&batch);
+                batches.push(batch);
+                Ok(())
+            },
             |completed, total| {
                 progress.push((completed, total));
                 Ok(())
@@ -99,14 +102,20 @@ fn public_preview_preserves_dense_fixture_counts_and_geometry_for_all_formats() 
         )
         .unwrap_or_else(|error| panic!("{name}: {error}"));
         assert_eq!(progress, [(0, 1), (1, 1)], "{name}");
-        assert_eq!(actual.block_count, expected.block_count, "{name}");
-        assert_eq!(
-            actual.block_entity_count, expected.block_entity_count,
-            "{name}"
+        assert_eq!(batches.len(), 1, "{name}");
+        support::assert_same_summary(&actual, &expected);
+        // The uploaded geometry must still describe the same triangles the raw
+        // mesher produced, inside the documented quantization grids.
+        let mut triangles = Vec::new();
+        for batch in &batches {
+            triangles.extend(support::packed_triangles(batch));
+        }
+        support::sort_triangles(&mut triangles);
+        support::assert_same_triangles(
+            &triangles,
+            &expected_triangles,
+            &support::Tolerances::for_batch(&batches[0]),
         );
-        assert_eq!(actual.triangle_count, expected.triangle_count, "{name}");
-        assert_eq!(actual.min, expected.min, "{name}");
-        assert_eq!(actual.max, expected.max, "{name}");
     }
 }
 
@@ -131,9 +140,9 @@ fn native_stream_counts_visible_bounds_and_stops_between_chunks() {
         &data,
         &pack,
         PreviewOptions::default(),
-        |preview| {
+        |batch| {
             chunk_count += 1;
-            triangles += preview.info.triangle_count;
+            triangles += batch.info.triangle_count;
             Ok(())
         },
         |completed, total| {
@@ -336,8 +345,8 @@ fn requested_chunk_sizes_and_disabled_separation_control_delivered_groups() {
                 thread_count: None,
                 speed_first: false,
             },
-            |preview| {
-                assert_eq!(preview.mesh.chunk_coord.is_some(), chunk_size.is_some());
+            |batch| {
+                assert_eq!(batch.chunk_coord.is_some(), chunk_size.is_some());
                 groups += 1;
                 Ok(())
             },
@@ -375,9 +384,9 @@ fn unseparated_greedy_mesh_merges_across_the_default_chunk_boundary() {
             chunk_size: None,
             ..PreviewOptions::default()
         },
-        |preview| {
+        |batch| {
             groups += 1;
-            assert_eq!(preview.mesh.chunk_coord, None);
+            assert_eq!(batch.chunk_coord, None);
             Ok(())
         },
         |_, _| Ok(()),
@@ -488,4 +497,139 @@ fn invalid_options_fail_before_decoding_or_consuming_input() {
     }
     .validate()
     .unwrap();
+}
+
+#[test]
+fn wide_unchunked_geometry_keeps_float_positions_and_frames_actual_bounds() {
+    let pack = test_pack();
+    let model = schematic(&[
+        (0, 0, 0, "minecraft:stone"),
+        (70_000, 0, 0, "minecraft:stone"),
+    ]);
+    let data = nucleation::formats::litematic::to_litematic(&model).unwrap();
+    let mut batches = Vec::new();
+    let info = load_chunks(
+        &data,
+        &pack,
+        PreviewOptions {
+            chunk_size: None,
+            ..PreviewOptions::default()
+        },
+        |batch| {
+            support::assert_upload_ready(&batch);
+            batches.push(batch);
+            Ok(())
+        },
+        |_, _| Ok(()),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    // A whole-schematic span wider than the largest regular chunk cannot be
+    // quantized without collapsing thin geometry, so positions stay float.
+    assert_eq!(batch.vertex_stride, 28);
+    // Framing still comes from actual geometry, never from the upload layout.
+    assert_eq!(batch.origin, [-0.5; 3]);
+    assert_eq!(batch.extent, [70_001.0, 1.0, 1.0]);
+    assert_eq!(batch.info.min, [-0.5; 3]);
+    assert_eq!(batch.info.max, [70_000.5, 0.5, 0.5]);
+    assert_eq!(info.min, [-0.5; 3]);
+    assert_eq!(info.max, [70_000.5, 0.5, 0.5]);
+    // Source bounds describe the occupied block grid, which is a different
+    // thing, so a consumer framing geometry cannot use them.
+    assert_eq!(batch.source_min, [0.0; 3]);
+    assert_eq!(batch.source_max, [70_000.0, 0.0, 0.0]);
+    assert_eq!(batch.chunk_coord, None);
+
+    // Float positions are the original coordinates, so the uploaded geometry
+    // matches the dense baseline instead of merely approximating it.
+    let dense = decode(&data).unwrap();
+    let mesh = dense.to_mesh(&pack, &mesh_config()).unwrap();
+    support::assert_same_summary(&batch.info, &support::summarize(&mesh, 2, 0));
+    support::assert_same_triangles(
+        &support::packed_triangles(batch),
+        &support::dense_triangles(&mesh),
+        &support::Tolerances::for_batch(batch),
+    );
+    let positions: Vec<f64> = support::packed_triangles(batch)
+        .iter()
+        .flat_map(|(_, vertices)| {
+            vertices
+                .iter()
+                .flat_map(|vertex| vertex[..3].iter().copied())
+        })
+        .collect();
+    assert!(
+        positions.iter().any(|&x| x > 69_999.0),
+        "the far block keeps its position"
+    );
+    assert!(
+        positions.iter().any(|&x| x < 0.0),
+        "the near block keeps its position"
+    );
+}
+
+#[test]
+fn first_use_textures_are_delivered_once_across_batches() {
+    let pack = test_pack();
+    let model = schematic(&[(0, 0, 0, "minecraft:stone"), (64, 0, 0, "minecraft:stone")]);
+    let data = nucleation::formats::litematic::to_litematic(&model).unwrap();
+    let mut batches = Vec::new();
+    let info = load_chunks(
+        &data,
+        &pack,
+        PreviewOptions {
+            chunk_size: Some(16),
+            ..PreviewOptions::default()
+        },
+        |batch| {
+            support::assert_upload_ready(&batch);
+            batches.push(batch);
+            Ok(())
+        },
+        |_, _| Ok(()),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(batches.len(), 2, "one block per chunk");
+
+    // The shared atlas is uploaded with the first nonempty batch and never
+    // again; it clamps rather than repeats.
+    let atlas = batches[0]
+        .textures
+        .iter()
+        .find(|texture| texture.index == 0)
+        .expect("the first batch carries the atlas");
+    assert!(!atlas.repeat);
+    assert!(!atlas.pixels.is_empty());
+    assert!(batches[1].textures.iter().all(|t| t.index != 0));
+
+    // A greedy material's pixels arrive on first use; later batches keep the
+    // texture's identity and index without carrying image bytes.
+    let material = batches[0]
+        .textures
+        .iter()
+        .find(|texture| texture.index != 0)
+        .expect("the first greedy material delivers its pixels");
+    assert!(material.repeat, "greedy materials repeat");
+    assert!(!material.pixels.is_empty());
+    let index = material.index;
+    assert!(
+        batches
+            .iter()
+            .skip(1)
+            .all(|batch| batch.textures.iter().all(|t| t.index != index)),
+        "a later batch never re-delivers the same pixels"
+    );
+    assert!(
+        batches[1]
+            .parts
+            .iter()
+            .any(|part| part.texture_index == index),
+        "later parts reference the texture by identity"
+    );
+    assert_eq!(batches[0].info.texture_count, 2);
+    assert_eq!(batches[1].info.texture_count, 2);
+    assert_eq!(info.texture_count, 2);
 }

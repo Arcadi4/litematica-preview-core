@@ -2,14 +2,20 @@
 //! Preview textures use the first animation frame; sprite-sheet playback data
 //! is not retained in per-chunk output.
 
+// The geometry oracle is shared by unit tests and registry-consumer tests.
+#[cfg(test)]
+extern crate self as litematica_preview_core;
+
 use nucleation::formats::limits::DecodeLimits;
 use nucleation::meshing::{MeshConfig, MeshLayer, MeshOutput, ResourcePackSource};
-use schematic_mesher::BoundingBox;
 
+mod batch;
 mod decode;
 mod meshing;
 mod parallel;
 mod stream;
+use batch::BatchPacker;
+pub use batch::{MeshBatch, MeshPart, Texture, VERTEX_STRIDE};
 pub use decode::{decode, DecodeFailure};
 pub use stream::MeshStream;
 
@@ -118,18 +124,6 @@ pub fn max_worker_threads() -> u8 {
     std::thread::available_parallelism().map_or(1, |count| count.get().min(8)) as u8
 }
 
-pub struct Preview {
-    pub mesh: MeshOutput,
-    pub textures: Vec<Texture>,
-    pub info: PreviewInfo,
-}
-
-pub struct Texture {
-    pub pixels: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct PreviewInfo {
     pub block_count: i64,
@@ -150,7 +144,7 @@ pub fn mesh_config() -> MeshConfig {
 
 /// Enumerate non-empty geometry layers with their material and alpha-class indices.
 /// Greedy materials use independent repeating textures rather than atlas UVs.
-pub fn parts(mesh: &MeshOutput) -> impl Iterator<Item = (&MeshLayer, u32, u32)> {
+pub(crate) fn parts(mesh: &MeshOutput) -> impl Iterator<Item = (&MeshLayer, u32, u32)> {
     [
         (&mesh.opaque, 0, 0),
         (&mesh.cutout, 0, 1),
@@ -175,7 +169,7 @@ pub fn load_chunks(
     data: &[u8],
     pack: &ResourcePackSource,
     options: PreviewOptions,
-    mut consume: impl FnMut(Preview) -> Result<(), String>,
+    mut consume: impl FnMut(MeshBatch) -> Result<(), String>,
     mut on_progress: impl FnMut(usize, usize) -> Result<(), String>,
     current: impl Fn() -> Result<(), String>,
 ) -> Result<PreviewInfo, String> {
@@ -193,7 +187,18 @@ pub fn load_chunks(
     on_progress(0, total)?;
     let mut chunks =
         meshing::ChunkMeshes::from_source(&source.source, pack, &mesh_config(), &current)?;
-    let mut atlas_pixels = chunks.take_atlas_pixels();
+    let mut packer = BatchPacker::new(
+        Texture {
+            index: 0,
+            width: chunks.atlas_width(),
+            height: chunks.atlas_height(),
+            pixels: chunks.take_atlas_pixels(),
+            repeat: false,
+        },
+        block_count,
+        block_entity_count,
+        256.0,
+    );
     current()?;
     let mut info = PreviewInfo {
         block_count,
@@ -207,7 +212,7 @@ pub fn load_chunks(
     chunks.consume(
         options.thread_count,
         options.speed_first,
-        |mut mesh| {
+        |mesh| {
             completed += 1;
             if parts(&mesh).next().is_none() {
                 if completed < total {
@@ -215,26 +220,22 @@ pub fn load_chunks(
                 }
                 return Ok(());
             }
-            // The first published chunk owns the atlas; later chunks keep metadata only.
-            mesh.atlas.pixels = std::mem::take(&mut atlas_pixels);
-            let preview = prepare(mesh, block_count, block_entity_count)?;
+            let batch = packer.pack(mesh)?;
+            current()?;
             info.triangle_count = info
                 .triangle_count
-                .checked_add(preview.info.triangle_count)
+                .checked_add(batch.info.triangle_count)
                 .ok_or("The schematic has too many triangles.")?;
             info.part_count = info
                 .part_count
-                .checked_add(preview.info.part_count)
+                .checked_add(batch.info.part_count)
                 .ok_or("The schematic has too many mesh parts.")?;
-            info.texture_count = info
-                .texture_count
-                .checked_add(preview.info.texture_count - 1)
-                .ok_or("The schematic has too many textures.")?;
+            info.texture_count = batch.info.texture_count;
             for axis in 0..3 {
-                info.min[axis] = info.min[axis].min(preview.info.min[axis]);
-                info.max[axis] = info.max[axis].max(preview.info.max[axis]);
+                info.min[axis] = info.min[axis].min(batch.info.min[axis]);
+                info.max[axis] = info.max[axis].max(batch.info.max[axis]);
             }
-            consume(preview)?;
+            consume(batch)?;
             if completed < total {
                 on_progress(completed, total)?;
             }
@@ -247,63 +248,6 @@ pub fn load_chunks(
     }
     on_progress(completed, total)?;
     Ok(info)
-}
-
-pub fn prepare(
-    mesh: MeshOutput,
-    block_count: i64,
-    block_entity_count: i64,
-) -> Result<Preview, String> {
-    let mut triangle_count = 0u64;
-    let mut part_count = 0u32;
-    for (layer, _, _) in parts(&mesh) {
-        let n = layer.positions.len();
-        if n > i32::MAX as usize
-            || layer.indices.len() > i32::MAX as usize
-            || layer.normals.len() != n
-            || layer.uvs.len() != n
-            || layer.colors.len() != n
-            || layer.indices.len() % 3 != 0
-            || layer.indices.iter().any(|&i| i as usize >= n)
-        {
-            return Err("The mesher produced invalid or oversized geometry.".into());
-        }
-        triangle_count += (layer.indices.len() / 3) as u64;
-        part_count += 1;
-    }
-    let bounds =
-        BoundingBox::from_points(parts(&mesh).flat_map(|(p, _, _)| p.positions.iter().copied()))
-            .ok_or("The schematic contains no visible geometry.")?;
-    if bounds.min.iter().chain(&bounds.max).any(|v| !v.is_finite()) {
-        return Err("The mesher produced invalid bounds.".into());
-    }
-    let mut textures = Vec::with_capacity(mesh.greedy_materials.len());
-    for material in &mesh.greedy_materials {
-        let image =
-            image::load_from_memory_with_format(&material.texture_png, image::ImageFormat::Png)
-                .map_err(|e| format!("Unable to read a block texture: {e}"))?
-                .into_rgba8();
-        let (width, height) = image.dimensions();
-        textures.push(Texture {
-            pixels: image.into_raw(),
-            width,
-            height,
-        });
-    }
-    let info = PreviewInfo {
-        block_count,
-        block_entity_count,
-        triangle_count,
-        part_count,
-        texture_count: textures.len() as u32 + 1,
-        min: bounds.min,
-        max: bounds.max,
-    };
-    Ok(Preview {
-        mesh,
-        textures,
-        info,
-    })
 }
 
 /// Overlay a bounded Java resource-pack ZIP on an immutable parsed base.
