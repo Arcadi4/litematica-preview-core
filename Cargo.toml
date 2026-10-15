@@ -1,6 +1,6 @@
 [package]
 name = "litematica-preview-core"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Bounded Minecraft schematic decoding and streaming mesh generation"
 license = "AGPL-3.0-only"
@@ -16,7 +16,9 @@ crate-type = ["rlib"]
 
 
 [dependencies]
-nucleation = { version = "=0.10.14", default-features = false, features = ["meshing"] }
+nucleation = { version = "=0.10.14", default-features = false, features = [
+  "meshing",
+] }
 schematic-mesher = "=0.2.0"
 quartz_nbt = { version = "0.2.9", features = ["preserve_order"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
@@ -62,3 +64,4 @@ codegen-units = 1
 # A bad schematic must not terminate a host process or poison a cached pack.
 panic = "unwind"
 strip = "debuginfo"
+
