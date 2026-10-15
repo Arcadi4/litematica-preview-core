@@ -23,6 +23,10 @@ pub struct MeshPart {
     /// 0 = opaque, 1 = cutout, 2 = blend.
     pub alpha_mode: u32,
     pub texture_index: u32,
+    /// Actual meshed-geometry bounds of this part in block-center coordinates,
+    /// the same space as the batch `origin`/`extent` convention.
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
 /// First-use RGBA8 sRGB pixels. Atlas zero clamps without mipmaps; other
@@ -251,10 +255,16 @@ fn append_layer(
         return Ok(());
     }
     let vertex_offset = batch.geometry.len();
+    let mut min = layer.positions.first().copied().unwrap_or_default();
+    let mut max = min;
     let scale: [f32; 3] = batch
         .extent
         .map(|extent| if extent > 0.0 { 1.0 / extent } else { 0.0 });
     for i in 0..layer.positions.len() {
+        for (axis, position) in layer.positions[i].iter().enumerate() {
+            min[axis] = min[axis].min(*position);
+            max[axis] = max[axis].max(*position);
+        }
         if batch.vertex_stride == VERTEX_STRIDE as u32 {
             for (axis, scale) in scale.iter().enumerate() {
                 let delta = layer.positions[i][axis] - batch.origin[axis];
@@ -317,6 +327,8 @@ fn append_layer(
         index_size: index_size as u32,
         alpha_mode,
         texture_index,
+        min,
+        max,
     });
     Ok(())
 }
