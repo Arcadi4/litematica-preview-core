@@ -4,8 +4,8 @@
 [LitematicaPreview](https://github.com/Arcadi4/LitematicaPreview) (Windows
 desktop) and [LitematicaQL](https://github.com/Arcadi4/LitematicaQL) (macOS).
 It decodes the seven supported Minecraft schematic formats under fixed budgets
-and streams triangle and texture output to the caller, so neither app
-JSON-serializes mesh buffers.
+and streams validated, GPU-ready geometry and first-use RGBA textures to the
+caller. Consumers upload the buffers without repacking vertices or indices.
 
 ## Supported formats
 
@@ -15,7 +15,7 @@ JSON-serializes mesh buffers.
 
 ```toml
 [dependencies]
-litematica-preview-core = "0.1.1"
+litematica-preview-core = "0.1.2"
 ```
 
 `load_chunks` is the main entry point: it decodes input, meshes it against a
@@ -31,8 +31,9 @@ load_chunks(
     &schematic_bytes,
     &pack,
     PreviewOptions::default(),
-    |preview| {
-        // `preview.parts` carries triangle buffers and atlas placements.
+    |batch| {
+        // Upload batch.geometry using batch.parts and batch.vertex_stride.
+        // batch.textures contains only images first used by this stream.
         Ok(())
     },
     |_, _| Ok(()),
@@ -41,10 +42,33 @@ load_chunks(
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`decode` returns a dense `DecodedSchematic` instead, for callers that want the
-block data without meshing. Both entry points take `nucleation`'s
-`DecodeLimits` through `decode_with_options`, so a malformed file cannot
-exhaust memory or wall-clock time.
+`decode_with_options` returns a compact `DecodedSchematic`; `MeshStream` borrows
+it and a resource pack to produce independently owned batches through a bounded
+worker window. Call `take_atlas` to upload the atlas before meshing, or let the
+first nonempty batch deliver it. `decode` remains available for callers that
+need a dense schematic. Content decoding uses bounded readers.
+
+### Upload format
+
+The compact vertex layout is 24 bytes: UNORM16x4 position, float2 UV,
+SNORM8x4 normal, and UNORM8x4 color. Positions decode using the batch's actual
+geometry `origin` and `extent`, not its source chunk-grid bounds. Parts use
+16-bit indices up to 65,536 vertices and 32-bit indices above that boundary.
+All multibyte values are little-endian, with 4-byte-aligned part offsets.
+
+`MeshStream` always uses the compact layout. `load_chunks` preserves detail
+in batches spanning more than 256 blocks along any axis by using a 28-byte
+layout with absolute float3 positions, followed by the same UV, normal, and
+color attributes. Check `vertex_stride` before binding attributes; the float
+layout uses an identity position transform. No rendering-platform switch is
+needed.
+
+Texture zero is the clamped atlas and must not generate mipmaps. Greedy
+textures repeat and may generate mipmaps. Texture IDs remain stable throughout
+the stream; PNGs are decoded only on first use, and the producer retains
+neither encoded nor decoded image bytes after delivery. Batch geometry counts
+and bounds include greedy parts and entities. `info.texture_count` reports
+the distinct textures known to the stream so far.
 
 ## Resource packs
 
@@ -79,7 +103,7 @@ receives:
 
 ```bash
 cargo package --locked --allow-dirty
-cargo test --manifest-path target/package/litematica-preview-core-0.1.1/Cargo.toml --lib --locked
+cargo test --manifest-path target/package/litematica-preview-core-0.1.2/Cargo.toml --lib --locked
 ```
 
 ## License
