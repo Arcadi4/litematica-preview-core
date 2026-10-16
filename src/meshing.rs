@@ -951,11 +951,30 @@ fn entity_to_input_block(entity: &Entity) -> InputBlock {
         id => id,
     };
     let mut input = InputBlock::new(format!("entity:{mesher_id}"));
-    if let Some(NbtValue::List(rotation)) = entity.nbt.get("Rotation") {
-        if let Some(NbtValue::Float(yaw)) = rotation.first() {
+    // Item frames store their mount direction as a `Facing` byte, not as a
+    // `Rotation` yaw: a floor or ceiling frame keeps yaw 0, so the yaw would
+    // report a wall direction. `Rotation` stays the fallback for the frames
+    // that carry no `Facing`.
+    let item_frame = matches!(mesher_id, "item_frame" | "glow_item_frame");
+    if item_frame {
+        if let Some(NbtValue::Byte(facing)) = entity.nbt.get("Facing") {
             input
                 .properties
-                .insert("facing".into(), yaw_to_facing(*yaw).into());
+                .insert("facing".into(), frame_facing(*facing).into());
+        }
+        if let Some(NbtValue::Byte(rotation)) = entity.nbt.get("ItemRotation") {
+            input
+                .properties
+                .insert("item_rotation".into(), (*rotation as u8 & 7).to_string());
+        }
+    }
+    if !input.properties.contains_key("facing") {
+        if let Some(NbtValue::List(rotation)) = entity.nbt.get("Rotation") {
+            if let Some(NbtValue::Float(yaw)) = rotation.first() {
+                input
+                    .properties
+                    .insert("facing".into(), yaw_to_facing(*yaw).into());
+            }
         }
     }
     if let Some(NbtValue::Compound(item)) = entity.nbt.get("Item") {
@@ -1022,6 +1041,22 @@ fn yaw_to_facing(yaw: f32) -> &'static str {
         "north"
     } else {
         "east"
+    }
+}
+
+/// Item frame `Facing` byte: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east.
+/// schematic-mesher 0.2.0 mounts a `north` or a `south` frame on the opposite
+/// block boundary, so the frame hangs one block face away from its wall. Swap
+/// those two labels here to correct the mount. Remove with the upstream fix.
+fn frame_facing(facing: i8) -> &'static str {
+    match facing {
+        0 => "down",
+        1 => "up",
+        2 => "south",
+        3 => "north",
+        4 => "west",
+        5 => "east",
+        _ => "south",
     }
 }
 
