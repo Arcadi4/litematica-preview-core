@@ -927,3 +927,232 @@ fn animated_block_texture_publishes_its_first_frame_pixels() {
     let offset = (y * width + x) * 4;
     assert_eq!(&pixels[offset..offset + 4], &[200, 20, 10, 255]);
 }
+
+fn frame_entity(facing: i8, rotation: i8, yaw: f32) -> Entity {
+    let mut entity = Entity::new("minecraft:item_frame".into(), (4.5, 1.03, 4.5));
+    entity.nbt.insert("Facing".into(), NbtValue::Byte(facing));
+    entity
+        .nbt
+        .insert("ItemRotation".into(), NbtValue::Byte(rotation));
+    entity.nbt.insert(
+        "Rotation".into(),
+        NbtValue::List(vec![NbtValue::Float(yaw), NbtValue::Float(0.0)]),
+    );
+    let mut item = std::collections::HashMap::new();
+    item.insert(
+        "id".to_string(),
+        NbtValue::String("minecraft:iron_ingot".into()),
+    );
+    entity.nbt.insert("Item".into(), NbtValue::Compound(item));
+    entity
+}
+
+/// Decode through the bounded Litematica reader and mesh the result, so the
+/// test covers the bounded decoder and the mesher input mapping together.
+fn decoded_source(bytes: &[u8]) -> CompactBlocks {
+    let limits = crate::decode::preview_limits();
+    crate::decode::decode_preview(bytes, &limits, None, None, false, &|| Ok(()))
+        .unwrap()
+        .0
+}
+
+/// Vertices of every triangle that lies inside one block, relative to that
+/// block's center. Whole triangles keep neighbor geometry out of a measurement.
+fn block_geometry(source: &CompactBlocks, block: (i32, i32, i32)) -> Vec<[f32; 3]> {
+    let pack = test_pack();
+    let mut meshes =
+        ChunkMeshes::from_source(source, &pack, &MeshConfig::new(), &|| Ok(())).unwrap();
+    let offset = |position: &[f32; 3]| {
+        [
+            position[0] - block.0 as f32,
+            position[1] - block.1 as f32,
+            position[2] - block.2 as f32,
+        ]
+    };
+    let mut points = Vec::new();
+    while let Some(mesh) = meshes.next().transpose().unwrap() {
+        for (layer, _, _) in parts(&mesh) {
+            for triangle in layer.indices.chunks_exact(3) {
+                let vertices = [
+                    offset(&layer.positions[triangle[0] as usize]),
+                    offset(&layer.positions[triangle[1] as usize]),
+                    offset(&layer.positions[triangle[2] as usize]),
+                ];
+                if vertices
+                    .iter()
+                    .all(|vertex| vertex.iter().all(|value| value.abs() <= 0.51))
+                {
+                    points.extend(vertices);
+                }
+            }
+        }
+    }
+    points
+}
+
+fn axis_range(points: &[[f32; 3]], axis: usize) -> (f32, f32) {
+    (
+        points.iter().map(|p| p[axis]).fold(f32::MAX, f32::min),
+        points.iter().map(|p| p[axis]).fold(f32::MIN, f32::max),
+    )
+}
+
+fn meshed_state(state: &BlockState, block: (i32, i32, i32)) -> Vec<[f32; 3]> {
+    let mut world = UniversalSchematic::new("fixture".into());
+    world.set_block(block.0, block.1, block.2, state);
+    let bytes = nucleation::formats::litematic::to_litematic(&world).unwrap();
+    block_geometry(&decoded_source(&bytes), block)
+}
+
+#[test]
+fn chest_facing_mirrors_east_and_west_only() {
+    for (facing, expected) in [
+        ("north", "north"),
+        ("south", "south"),
+        ("east", "west"),
+        ("west", "east"),
+    ] {
+        for id in [
+            "minecraft:chest",
+            "minecraft:trapped_chest",
+            "minecraft:ender_chest",
+        ] {
+            let mut state = BlockState::new(id);
+            state.properties.push(("facing".into(), facing.into()));
+            state.properties.push(("type".into(), "single".into()));
+            let block = block_state_to_input_block(&state);
+            assert_eq!(
+                block.properties.get("facing").map(String::as_str),
+                Some(expected),
+                "{id} facing {facing}"
+            );
+        }
+    }
+
+    // Blocks that the mesher turns correctly keep their own facing.
+    for id in ["minecraft:oak_stairs", "minecraft:barrel"] {
+        let mut state = BlockState::new(id);
+        state.properties.push(("facing".into(), "east".into()));
+        let block = block_state_to_input_block(&state);
+        assert_eq!(
+            block.properties.get("facing").map(String::as_str),
+            Some("east"),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn item_frame_facing_byte_wins_over_the_rotation_yaw() {
+    for (facing, expected) in [
+        (0i8, "down"),
+        (1, "up"),
+        (2, "south"),
+        (3, "north"),
+        (4, "west"),
+        (5, "east"),
+    ] {
+        let block = entity_to_input_block(&frame_entity(facing, 3, 0.0));
+        assert_eq!(
+            block.properties.get("facing").map(String::as_str),
+            Some(expected),
+            "Facing {facing} item frame"
+        );
+        assert_eq!(
+            block.properties.get("item_rotation").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(
+            block.properties.get("item").map(String::as_str),
+            Some("minecraft:iron_ingot")
+        );
+    }
+
+    // A frame without `Facing` still reports its wall direction.
+    let mut entity = Entity::new("minecraft:item_frame".into(), (4.5, 1.5, 4.5));
+    entity.nbt.insert(
+        "Rotation".into(),
+        NbtValue::List(vec![NbtValue::Float(90.0), NbtValue::Float(0.0)]),
+    );
+    let block = entity_to_input_block(&entity);
+    assert_eq!(
+        block.properties.get("facing").map(String::as_str),
+        Some("west")
+    );
+}
+
+/// `Facing` decides the mount: a floor frame hugs the bottom of its block, a
+/// ceiling frame its top, and a wall frame the boundary behind its front.
+#[test]
+fn item_frames_mesh_at_the_block_boundary_their_facing_chooses() {
+    for (facing, yaw, axis, sign) in [
+        (0i8, 0.0f32, 1usize, 1.0f32),
+        (1, 0.0, 1, -1.0),
+        (2, 0.0, 2, 1.0),
+        (3, 180.0, 2, -1.0),
+        (4, 90.0, 0, 1.0),
+        (5, 270.0, 0, -1.0),
+    ] {
+        // Keep the only solid block away from the frame, so the measured
+        // geometry belongs to the frame alone.
+        let mut world = schematic(&[(0, 0, 0, "minecraft:stone")]);
+        world.add_entity(frame_entity(facing, 0, yaw));
+        let bytes = nucleation::formats::litematic::to_litematic(&world).unwrap();
+        let points = block_geometry(&decoded_source(&bytes), (4, 1, 4));
+        assert!(
+            !points.is_empty(),
+            "Facing {facing} item frame produced no geometry"
+        );
+        let (low, high) = axis_range(&points, axis);
+        let (mount, back) = if sign > 0.0 { (high, low) } else { (low, high) };
+        let depth = high - low;
+        assert!(
+            (mount - sign * 0.5).abs() < 0.05,
+            "Facing {facing} frame mounts at {mount}, expected {}",
+            sign * 0.5
+        );
+        assert!(
+            depth < 0.25,
+            "Facing {facing} frame is {depth} blocks deep, so it is not a flat frame"
+        );
+        assert!(
+            (back - sign * 0.44).abs() < 0.06,
+            "Facing {facing} frame ends at {back}, expected {}",
+            sign * 0.44
+        );
+    }
+}
+
+/// A chest wears its latch on the face it opens toward, so the meshed geometry
+/// reaches that boundary and stops one texel short on the far side.
+#[test]
+fn chest_latches_mesh_on_the_facing_side() {
+    for (facing, axis, sign) in [
+        ("north", 2usize, -1.0f32),
+        ("south", 2, 1.0),
+        ("east", 0, 1.0),
+        ("west", 0, -1.0),
+    ] {
+        let mut state = BlockState::new("minecraft:chest");
+        state.properties.push(("facing".into(), facing.into()));
+        state.properties.push(("type".into(), "single".into()));
+        state
+            .properties
+            .push(("waterlogged".into(), "false".into()));
+        let points = meshed_state(&state, (4, 1, 4));
+        assert!(
+            !points.is_empty(),
+            "Facing {facing} chest produced no geometry"
+        );
+        let (low, high) = axis_range(&points, axis);
+        let (front, back) = if sign > 0.0 { (high, low) } else { (low, high) };
+        assert!(
+            (front - sign * 0.5).abs() < 1e-3,
+            "Facing {facing} chest reaches {front} on the facing side"
+        );
+        assert!(
+            (back + sign * 0.4375).abs() < 1e-3,
+            "Facing {facing} chest reaches {back} on the far side"
+        );
+    }
+}
