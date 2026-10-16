@@ -934,6 +934,21 @@ fn block_state_to_input_block(state: &BlockState) -> InputBlock {
     for (key, value) in &state.properties {
         input.properties.insert(key.to_string(), value.to_string());
     }
+    // schematic-mesher 0.2.0 turns `facing=east` and `facing=west` chests the
+    // wrong way round, so the lid latch sits on the far face and a double chest
+    // puts both half-latches at the outer corners. Chest block states carry no
+    // facing-dependent model, so a mirrored `facing` repairs the block entity
+    // alone. Remove with the upstream fix.
+    if matches!(input.block_id(), "chest" | "trapped_chest" | "ender_chest") {
+        let mirrored = match input.properties.get("facing").map(String::as_str) {
+            Some("east") => Some("west"),
+            Some("west") => Some("east"),
+            _ => None,
+        };
+        if let Some(facing) = mirrored {
+            input.properties.insert("facing".into(), facing.into());
+        }
+    }
     input
 }
 
