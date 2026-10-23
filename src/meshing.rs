@@ -513,7 +513,7 @@ impl CompactBlocks {
                                 crate::parallel::check_cancelled(cancelled)?;
                             }
                             let entry = remap
-                                .get(state)
+                                .get(state as usize)
                                 .ok_or("The schematic contains an invalid palette index.")?;
                             if let Some(state) = entry.index {
                                 let (x, y, z) = region.index_to_coords(start + offset);
@@ -533,7 +533,7 @@ impl CompactBlocks {
             } else {
                 for (index, &state) in region.blocks.iter().enumerate() {
                     let entry = remap
-                        .get(state)
+                        .get(state as usize)
                         .ok_or("The schematic contains an invalid palette index.")?;
                     if let Some(state) = entry.index {
                         let (x, y, z) = region.index_to_coords(index);

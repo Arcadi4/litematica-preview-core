@@ -189,8 +189,8 @@ impl Keep {
         match self {
             Self::Triple if matches!(name, "x" | "y" | "z") => Self::Int,
             Self::State => match name {
-                "Name" => Self::String,
-                "Properties" => Self::Properties,
+                "Name" | "id" => Self::String,
+                "Properties" | "properties" => Self::Properties,
                 _ => Self::None,
             },
             Self::Properties => Self::String,

@@ -26,15 +26,20 @@ There is no Node.js tooling; every task is a cargo command.
 
 ## Constraints
 
-- Preserve Nucleation's exact `=0.10.14` pin, bounded decoding, Java binary NBT
-  fallback, and brace-state SNBT normalization until real fixtures justify changes.
+- Preserve bounded decoding, Java binary NBT fallback, and brace-state SNBT
+  normalization until real fixtures justify changes.
+- Nucleation is `=0.11.0` from crates.io. Its release resolves `schematic-mesher
+  0.2.0` from a commit that lacks the API its `meshing` feature imports, so
+  `Cargo.toml` patches the mesher to git rev `286323e`. The patch applies at a
+  build root only: hosts repeat it, and `cargo package` fails until Nucleation
+  publishes a fixed mesher. Hosts take this crate from git for the same reason.
 - schematic-mesher 0.2.0 turns `facing=east` and `facing=west` chests the wrong
   way round, and mounts `north` and `south` item frames on the opposite block
   boundary. The input mapping in `src/meshing.rs` compensates for both. Remove
   that compensation with the upstream fix.
 - Keep opaque, cutout, and transparent parts separate. Greedy materials use their
   own repeating textures. The atlas is shared and clamped. Never flatten them.
-- Include greedy parts in triangle counts and bounds. Nucleation 0.10.14's
+- Include greedy parts in triangle counts and bounds. `schematic_mesher` 0.2.0's
   `total_triangles()` and `is_empty()` omit them.
 - Frame geometry bounds rather than chunk-padded schematic dimensions.
 - `MeshStream` guarantees compact 24-byte vertices. `load_chunks` uses the same
