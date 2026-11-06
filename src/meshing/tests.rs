@@ -738,6 +738,7 @@ fn generated_texture_cannot_repack_an_already_shared_atlas() {
         &atlas,
         &palette,
         &[false],
+        &[builder::wet(&palette[0])],
         &[(position, 0)],
         &[(position, &palette[0])],
         BoundingBox::new([0.0; 3], [1.0; 3]),

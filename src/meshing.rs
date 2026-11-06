@@ -717,6 +717,7 @@ pub(super) struct ChunkMeshes<'a> {
     config: MesherConfig,
     atlas: TextureAtlas,
     atlas_only: Vec<bool>,
+    wet: Vec<builder::Wet>,
 }
 
 impl<'a> ChunkMeshes<'a> {
@@ -741,6 +742,7 @@ impl<'a> ChunkMeshes<'a> {
         } else {
             vec![false; source.palette.len()]
         };
+        let wet = source.palette.iter().map(builder::wet).collect();
         current()?;
         Ok(Self {
             source,
@@ -749,6 +751,7 @@ impl<'a> ChunkMeshes<'a> {
             config,
             atlas,
             atlas_only,
+            wet,
         })
     }
 
@@ -794,6 +797,7 @@ impl<'a> ChunkMeshes<'a> {
             &self.atlas,
             &self.source.palette,
             &self.atlas_only,
+            &self.wet,
             &blocks,
             &context,
             bounds,

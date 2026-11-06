@@ -49,12 +49,43 @@ pub(super) fn atlas_only(
     })
 }
 
+/// How a palette state meets water.
+pub(super) enum Wet {
+    Dry,
+    /// A water or lava block.
+    Fluid,
+    /// A block holding a water source, kept here without that water.
+    Waterlogged(InputBlock),
+}
+
+pub(super) fn wet(block: &InputBlock) -> Wet {
+    if liquid::FluidState::from_block(block).is_some() {
+        return Wet::Fluid;
+    }
+    if !liquid::is_waterlogged(block) {
+        return Wet::Dry;
+    }
+    let mut dry = block.clone();
+    dry.properties.insert("waterlogged".into(), "false".into());
+    Wet::Waterlogged(dry)
+}
+
+/// Blended layers draw in emission order, so fluids mesh before every other
+/// state: a pane in front of water must blend over it from any side.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    Fluids,
+    Greedy,
+    Atlas,
+}
+
 pub(super) fn mesh(
     pack: &ResourcePack,
     config: &MesherConfig,
     shared_atlas: &TextureAtlas,
     palette: &[InputBlock],
     atlas_only: &[bool],
+    wet: &[Wet],
     blocks: &[(BlockPosition, u32)],
     context: &[(BlockPosition, &InputBlock)],
     bounds: BoundingBox,
@@ -87,26 +118,36 @@ pub(super) fn mesh(
     };
     let mut atlas_config = config.clone();
     atlas_config.greedy_meshing = false;
+    let source_water = InputBlock::new("minecraft:water").with_property("level", "0");
     // A second builder is only needed for cutout/missing-texture states in greedy
     // mode. Finish each builder before starting the next to bound scratch memory.
-    for use_atlas in [false, true] {
-        if use_atlas && !config.greedy_meshing {
-            break;
-        }
-        let selected = |state: u32| config.greedy_meshing && atlas_only[state as usize];
-        if !blocks
-            .iter()
-            .any(|&(_, state)| selected(state) == use_atlas)
-        {
+    for pass in [Pass::Fluids, Pass::Greedy, Pass::Atlas] {
+        let wanted = |state: u32| {
+            let state = state as usize;
+            match pass {
+                Pass::Fluids => !matches!(wet[state], Wet::Dry),
+                Pass::Greedy => {
+                    !matches!(wet[state], Wet::Fluid)
+                        && !(config.greedy_meshing && atlas_only[state])
+                }
+                Pass::Atlas => {
+                    !matches!(wet[state], Wet::Fluid) && config.greedy_meshing && atlas_only[state]
+                }
+            }
+        };
+        if !blocks.iter().any(|&(_, state)| wanted(state)) {
             continue;
         }
-        let active_config = if use_atlas { &atlas_config } else { config };
+        let active_config = if pass == Pass::Greedy {
+            config
+        } else {
+            &atlas_config
+        };
         let mut builder = MeshBuilder::new(pack, active_config, culler.as_ref(), liquid_map, None);
         for &(position, state) in blocks {
-            if selected(state) != use_atlas {
+            if !wanted(state) {
                 continue;
             }
-            let block = &palette[state as usize];
             if config.cull_occluded_blocks
                 && culler
                     .as_ref()
@@ -114,6 +155,11 @@ pub(super) fn mesh(
             {
                 continue;
             }
+            let block = match (pass, &wet[state as usize]) {
+                (Pass::Fluids, Wet::Waterlogged(_)) => &source_water,
+                (_, Wet::Waterlogged(dry)) => dry,
+                _ => &palette[state as usize],
+            };
             builder
                 .add_block(position, block)
                 .map_err(|error| error.to_string())?;

@@ -37,6 +37,9 @@ There is no Node.js tooling; every task is a cargo command.
   way round, and mounts `north` and `south` item frames on the opposite block
   boundary. The input mapping in `src/meshing.rs` compensates for both. Remove
   that compensation with the upstream fix.
+- Blended layers draw in emission order without sorting. Mesh fluids, and the water
+  of waterlogged blocks, before every other state so panes blend over the water
+  behind them from any side.
 - Keep opaque, cutout, and transparent parts separate. Greedy materials use their
   own repeating textures. The atlas is shared and clamped. Never flatten them.
 - Include greedy parts in triangle counts and bounds. `schematic_mesher` 0.2.0's
