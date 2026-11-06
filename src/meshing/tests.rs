@@ -1157,3 +1157,42 @@ fn chest_latches_mesh_on_the_facing_side() {
         );
     }
 }
+
+/// Blended layers draw in emission order, so fluids must precede every pane
+/// around them or the pane's far wall blends over the water behind it.
+#[test]
+fn fluids_precede_panes_in_the_blended_layer() {
+    let pack = test_pack();
+    for host in [
+        BlockState::new("minecraft:water"),
+        BlockState::new("minecraft:stone").with_property("waterlogged", "true"),
+    ] {
+        let mut schematic =
+            schematic(&[(0, 0, 0, "minecraft:glass"), (4, 0, 0, "minecraft:glass")]);
+        schematic.set_block(2, 0, 0, &host);
+        let config = MeshConfig::new().with_greedy_meshing(false);
+        with_meshes(schematic, &pack, &config, None, |chunks| {
+            let mesh = chunks.next().unwrap().unwrap();
+            let layer = &mesh.transparent;
+            let is_water: Vec<bool> = layer
+                .indices
+                .chunks_exact(3)
+                .map(|triangle| {
+                    let x = triangle
+                        .iter()
+                        .map(|&index| layer.positions[index as usize][0])
+                        .sum::<f32>()
+                        / 3.0;
+                    (1.5..2.5).contains(&x)
+                })
+                .collect();
+            let last_water = is_water.iter().rposition(|&water| water).unwrap();
+            let first_pane = is_water.iter().position(|&water| !water).unwrap();
+            assert!(
+                last_water < first_pane,
+                "{}: water draws after a pane",
+                host.name
+            );
+        });
+    }
+}
