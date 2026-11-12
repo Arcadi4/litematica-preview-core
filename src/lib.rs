@@ -280,7 +280,9 @@ pub fn resource_pack_overlay(
                 "This resource pack exceeds the previewer's expanded-size limit.",
             ));
         }
-        metadata |= file.name() == "pack.mcmeta";
+        // zip 9 surfaces name-decoding failures as errors; the raw bytes
+        // compare exactly for this ASCII top-level entry.
+        metadata |= file.name_raw() == b"pack.mcmeta";
     }
     if !metadata {
         return Err(invalid("The ZIP must contain pack.mcmeta and assets at its top level. Choose a Minecraft Java resource pack."));
