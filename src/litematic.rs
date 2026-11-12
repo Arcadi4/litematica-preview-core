@@ -1,6 +1,3 @@
-//! Bounded dense and direct compact Litematic import.
-//!
-//! Nucleation 0.10.14 format handling; see NOTICE and ThirdParty/Nucleation-LICENSE.txt.
 use nucleation::block_entity::BlockEntity;
 use nucleation::formats::limits::DecodeLimits;
 use nucleation::BoundingBox;

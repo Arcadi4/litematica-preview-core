@@ -108,4 +108,4 @@ cargo test --manifest-path target/package/litematica-preview-core-0.1.2/Cargo.to
 
 ## License
 
-AGPL-3.0-only. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+AGPL-3.0-only. See [LICENSE](LICENSE).

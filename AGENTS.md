@@ -13,7 +13,7 @@ package root; there is no workspace and no app code.
 - `tests/`: five integration suites plus `inspect_memory.rs`, an opt-in ignored
   allocation diagnostic.
 - `Fixtures/Formats/`: one minimal fixture per supported format.
-- `ThirdParty/`: bundled dependency license texts, referenced from `NOTICE`.
+- `ThirdParty/`: bundled dependency license texts.
 
 ## Commands
 
@@ -52,4 +52,3 @@ There is no Node.js tooling; every task is a cargo command.
   textures repeat and can generate mipmaps.
 - `panic = "unwind"` is required: hosts recover from a panic in this crate, so a
   malformed schematic must not terminate their process or poison a cached pack.
-- No resource pack is tracked here. `NOTICE` explains the Mojang asset boundary.
