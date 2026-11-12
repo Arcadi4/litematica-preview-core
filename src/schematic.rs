@@ -156,7 +156,7 @@ pub(super) fn read(data: &[u8], limits: &DecodeLimits) -> Result<UniversalSchema
         // The region is initialized to air at index zero. Skipping it preserves
         // the initialized count and bounds; other writes update bookkeeping.
         if target != 0 {
-            let (x, y, z) = region.index_to_coords(index);
+            let (x, y, z) = region.bounds_cell(index);
             region.set_block_at_index_unchecked(target, x, y, z);
         }
     }
@@ -341,7 +341,7 @@ mod tests {
                 assert_eq!(actual.default_region.count_blocks(), 3);
                 assert_eq!(actual.get_dimensions(), expected.get_dimensions());
                 for index in 0..8 {
-                    let (x, y, z) = actual.default_region.index_to_coords(index);
+                    let (x, y, z) = actual.default_region.bounds_cell(index);
                     assert_eq!(actual.get_block(x, y, z), expected.get_block(x, y, z));
                 }
                 assert_eq!(

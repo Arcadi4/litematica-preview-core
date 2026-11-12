@@ -237,7 +237,7 @@ fn read_region(prepared: PreparedRegion) -> Result<Region, String> {
         let palette_index = mapping[packed_index(&packed, bits, index)];
         // The dense allocation is initialized to ordinary air at index zero.
         if palette_index != 0 {
-            let (x, y, z) = region.index_to_coords(index);
+            let (x, y, z) = region.bounds_cell(index);
             region.set_block_at_index_unchecked(palette_index, x, y, z);
         }
     }

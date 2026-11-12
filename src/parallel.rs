@@ -7,9 +7,9 @@ use std::sync::{
     Mutex,
 };
 
-/// Maximum source blocks per decode task. Dense inputs are borrowed; packed tasks
-/// own at most 128 KiB of words and 256 KiB of output. Eight admitted tasks add at
-/// most 3 MiB of payload, excluding allocator and stack overhead. No full packed
+/// Maximum source blocks per decode task. Packed and dense tasks own at most 128 KiB
+/// of words or 256 KiB of cells, and 256 KiB of output. Eight admitted tasks add at
+/// most 4 MiB of payload, excluding allocator and stack overhead. No full packed
 /// region or decompressed document is retained.
 pub(crate) const BATCH_BLOCKS: usize = 16 * 1024;
 

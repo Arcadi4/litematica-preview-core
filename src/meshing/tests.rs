@@ -214,8 +214,7 @@ fn dynamic_particles_entities_and_position_keys_keep_one_atlas_layout() {
         for path in [
             "_particle/flame",
             "_particle/glitter",
-            "_player_head/64_0_0",
-            "_player_head/128_0_0",
+            "_skin/pack/entity/player/wide/steve",
             "entity/armorstand/wood",
             "__missing__",
         ] {

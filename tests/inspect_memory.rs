@@ -226,10 +226,10 @@ fn inspect_decoder_allocations() {
             block_entities += region.block_entities.len() as u128;
             entities += region.entities.len() as u128;
             println!(
-                "region={:?} cells={} dense_capacity_bytes={} non_air={}",
+                "region={:?} cells={} palette_states={} non_air={}",
                 region.name,
-                region.blocks.len(),
-                region.blocks.capacity() * std::mem::size_of::<usize>(),
+                region.volume(),
+                region.palette_len(),
                 region.count_blocks()
             );
         }

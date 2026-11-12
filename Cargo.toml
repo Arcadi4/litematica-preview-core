@@ -16,10 +16,8 @@ crate-type = ["rlib"]
 
 
 [dependencies]
-nucleation = { version = "=0.11.0", default-features = false, features = [
-  "meshing",
-] }
-schematic-mesher = "=0.2.0"
+nucleation = { version = "0.12.1", default-features = false, features = ["meshing"] }
+schematic-mesher = "0.2.1"
 quartz_nbt = { version = "0.2.9", features = ["preserve_order"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 regex = "1"
@@ -28,9 +26,6 @@ rustc-hash = "2"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 lz4_flex = { version = "0.14", default-features = false, features = ["std"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
-
-[patch.crates-io]
-schematic-mesher = { git = "https://github.com/Schem-at/Schematic-Mesher.git", rev = "286323e472cd8a5363b66a035a3be02ecdd4f164" }
 
 [[test]]
 name = "formats"

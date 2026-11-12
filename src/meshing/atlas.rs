@@ -1,7 +1,7 @@
 //! Discover shared atlas tiles through the mesher's public APIs.
 
 use schematic_mesher::atlas::{AtlasBuilder, AtlasRegion, TextureAtlas};
-use schematic_mesher::mesher::{element::MeshBuilder, entity};
+use schematic_mesher::mesher::element::MeshBuilder;
 use schematic_mesher::resource_pack::TextureData;
 use schematic_mesher::{BlockPosition, InputBlock, MesherConfig, ResourcePack};
 use std::collections::HashSet;
@@ -9,16 +9,7 @@ use std::collections::HashSet;
 /// Texture keys for these states include world position, so they require
 /// discovery at each actual position rather than one palette representative.
 pub(super) fn position_dependent(block: &InputBlock) -> bool {
-    matches!(entity::detect_mob(block), Some(entity::MobType::Player))
-        || matches!(
-            entity::detect_block_entity(block),
-            Some(entity::BlockEntityType::Skull(entity::SkullType::Player))
-        )
-        || block.properties.contains_key("inventory")
-        || block
-            .properties
-            .get("rider")
-            .is_some_and(|rider| rider.trim_start_matches("entity:") == "player")
+    block.properties.contains_key("inventory")
 }
 
 /// The input contains unique static states and actual dynamic/entity positions.
@@ -168,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn position_keyed_skins_survive_shared_atlas_and_chunk_builds() {
+    fn shared_player_skin_survives_shared_atlas_and_chunk_builds() {
         let mut pack = ResourcePack::new();
         let pixels: Vec<u8> = (0..64 * 64 * 4).map(|index| (index % 251) as u8).collect();
         pack.add_texture(
@@ -186,9 +177,9 @@ mod tests {
         )
         .unwrap();
         assert!(atlas.contains("__missing__"));
+        let key = "_skin/pack/entity/player/wide/steve";
         for pos in positions {
-            let key = format!("_player_head/{}_{}_{}", pos.x, pos.y, pos.z);
-            let region = atlas.get_region(&key).unwrap();
+            let region = atlas.get_region(key).unwrap();
             assert_eq!(extract_tile(&atlas, region).unwrap().pixels, pixels);
             let mut builder = MeshBuilder::new(&pack, &config, None, None, None);
             builder.add_block(pos, &block).unwrap();

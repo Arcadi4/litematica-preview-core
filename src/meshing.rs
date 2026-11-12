@@ -493,22 +493,48 @@ impl CompactBlocks {
                 )
                 .ok_or("Block count exceeds i64.")?;
             let remap = builder.register_palette(&region.get_palette())?;
+            let tight = region.get_tight_bounds();
+            let cell_count = tight.as_ref().map_or(0, |bounds| {
+                let dimension = |min: i32, max: i32| (i64::from(max) - i64::from(min) + 1) as usize;
+                dimension(bounds.min.0, bounds.max.0)
+                    .saturating_mul(dimension(bounds.min.1, bounds.max.1))
+                    .saturating_mul(dimension(bounds.min.2, bounds.max.2))
+            });
+            // `content_cells` overflows its x range at `i32::MAX`, so walk the
+            // tight bounds directly; that cell range stays representable.
+            let region_ref = &region;
+            let mut cells = tight.into_iter().flat_map(move |bounds| {
+                let (min, max) = (bounds.min, bounds.max);
+                (min.1..=max.1).flat_map(move |y| {
+                    (min.2..=max.2).flat_map(move |z| {
+                        (min.0..=max.0).map(move |x| {
+                            (
+                                (x, y, z),
+                                region_ref
+                                    .get_block_index(x, y, z)
+                                    .map_or(0, |index| index as u32),
+                            )
+                        })
+                    })
+                })
+            });
             if let Some(count) = thread_count {
-                let jobs = region
-                    .blocks
-                    .chunks(crate::parallel::BATCH_BLOCKS)
-                    .enumerate()
-                    .map(|(batch, blocks)| Ok((batch * crate::parallel::BATCH_BLOCKS, blocks)));
+                let batches = cell_count.div_ceil(crate::parallel::BATCH_BLOCKS);
+                let jobs = (0..batches).map(|_| {
+                    let batch: Vec<_> =
+                        cells.by_ref().take(crate::parallel::BATCH_BLOCKS).collect();
+                    Ok(batch)
+                });
                 crate::parallel::ordered(
                     jobs,
                     usize::from(count),
                     speed_first,
-                    |(start, blocks), cancelled| {
+                    |batch, cancelled| {
                         let mut converted = Vec::new();
                         converted
-                            .try_reserve_exact(blocks.len())
+                            .try_reserve_exact(batch.len())
                             .map_err(|e| e.to_string())?;
-                        for (offset, &state) in blocks.iter().enumerate() {
+                        for (offset, ((x, y, z), state)) in batch.into_iter().enumerate() {
                             if offset % 1024 == 0 {
                                 crate::parallel::check_cancelled(cancelled)?;
                             }
@@ -516,7 +542,6 @@ impl CompactBlocks {
                                 .get(state as usize)
                                 .ok_or("The schematic contains an invalid palette index.")?;
                             if let Some(state) = entry.index {
-                                let (x, y, z) = region.index_to_coords(start + offset);
                                 converted.push((BlockPosition::new(x, y, z), state));
                             }
                         }
@@ -531,12 +556,11 @@ impl CompactBlocks {
                     current,
                 )?;
             } else {
-                for (index, &state) in region.blocks.iter().enumerate() {
+                for ((x, y, z), state) in cells {
                     let entry = remap
                         .get(state as usize)
                         .ok_or("The schematic contains an invalid palette index.")?;
                     if let Some(state) = entry.index {
-                        let (x, y, z) = region.index_to_coords(index);
                         builder.push_index(BlockPosition::new(x, y, z), state, true)?;
                     }
                 }
@@ -545,7 +569,7 @@ impl CompactBlocks {
                 builder.push_entity(entity)?;
             }
             builder.add_block_entities(region.block_entities.len())?;
-            // Drop each dense region before loading the next to bound peak volume storage.
+            // Drop each region before loading the next to bound peak storage.
         }
         Ok(builder.finish())
     }
