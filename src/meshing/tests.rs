@@ -1,5 +1,7 @@
 use super::*;
 use crate::parts;
+use nucleation::block_entity::BlockEntity;
+use nucleation::nbt::{NbtMap, NbtValue as NbtMapValue};
 
 mod fixtures;
 use fixtures::{schematic, test_pack};
@@ -1194,4 +1196,119 @@ fn fluids_precede_panes_in_the_blended_layer() {
             );
         });
     }
+}
+
+/// Base64 of a `textures` property whose skin metadata marks the slim model.
+const SLIM_SKIN_TEXTURE: &str = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2ZkOWJhNDJhN2M4MWVlZWEyMmYxNTI0MjcxYWU4NWE4ZTA0NWNlMGFmNWE2YWUxNmM2NDA2YWU5MTdlNjhiNSIsIm1ldGFkYXRhIjp7Im1vZGVsIjoic2xpbSJ9fX19";
+
+fn player_head_entity(position: (i32, i32, i32), uuid: &str) -> BlockEntity {
+    let mut property = NbtMap::new();
+    property.insert("name".into(), NbtMapValue::String("textures".into()));
+    property.insert(
+        "value".into(),
+        NbtMapValue::String(SLIM_SKIN_TEXTURE.into()),
+    );
+    let mut profile = NbtMap::new();
+    profile.insert("id".into(), NbtMapValue::String(uuid.into()));
+    profile.insert("name".into(), NbtMapValue::String("Notch".into()));
+    profile.insert(
+        "properties".into(),
+        NbtMapValue::List(vec![NbtMapValue::Compound(property)]),
+    );
+    let mut nbt = NbtMap::new();
+    nbt.insert("profile".into(), NbtMapValue::Compound(profile));
+    let mut entity = BlockEntity::new("minecraft:player_head".into(), position);
+    entity.set_nbt(nbt);
+    entity
+}
+
+fn legacy_player_head_entity(position: (i32, i32, i32), uuid: &str) -> BlockEntity {
+    let mut texture = NbtMap::new();
+    texture.insert(
+        "Value".into(),
+        NbtMapValue::String(SLIM_SKIN_TEXTURE.into()),
+    );
+    let mut textures = NbtMap::new();
+    textures.insert(
+        "textures".into(),
+        NbtMapValue::List(vec![NbtMapValue::Compound(texture)]),
+    );
+    let mut owner = NbtMap::new();
+    owner.insert("Id".into(), NbtMapValue::String(uuid.into()));
+    owner.insert("Name".into(), NbtMapValue::String("Notch".into()));
+    owner.insert("Properties".into(), NbtMapValue::Compound(textures));
+    let mut nbt = NbtMap::new();
+    nbt.insert("SkullOwner".into(), NbtMapValue::Compound(owner));
+    let mut entity = BlockEntity::new("minecraft:player_head".into(), position);
+    entity.set_nbt(nbt);
+    entity
+}
+
+fn input_at(source: &CompactBlocks, position: (i32, i32, i32)) -> &InputBlock {
+    for (coord, blocks) in &source.chunks {
+        let origin = source.origin_of(*coord);
+        if let Some((_, index)) = blocks
+            .records(origin)
+            .find(|(pos, _)| (pos.x, pos.y, pos.z) == position)
+        {
+            return &source.palette[index as usize];
+        }
+    }
+    panic!("no block at {position:?}");
+}
+
+/// The skin lives in a block entity, so a head override must replace the plain
+/// block-state input in both conversion paths and keep the block counted once.
+#[test]
+fn player_head_profiles_reach_both_conversion_paths() {
+    let uuid = "ec561538-f3fd-461d-aff5-086b22154bce";
+    let legacy_uuid = "9c2e4c7a-6a1e-4f0b-9d3c-2f1c6a5b8e10";
+    let skin = "nucleation:skins/7fd9ba42a7c81eeea22f1524271ae85a8e045ce0af5a6ae16c6406ae917e68b5";
+    let mut world = UniversalSchematic::new("heads".into());
+    for x in [2, 5, 8] {
+        world.set_block(x, 3, 4, &BlockState::new("minecraft:player_head"));
+    }
+    world.set_block_entity(
+        nucleation::block_position::BlockPosition::new(2, 3, 4),
+        player_head_entity((2, 3, 4), uuid),
+    );
+    world.set_block_entity(
+        nucleation::block_position::BlockPosition::new(8, 3, 4),
+        legacy_player_head_entity((8, 3, 4), legacy_uuid),
+    );
+
+    let assert_heads = |source: &CompactBlocks| {
+        for (position, head_uuid) in [((2, 3, 4), uuid), ((8, 3, 4), legacy_uuid)] {
+            let profiled = input_at(source, position);
+            assert_eq!(
+                profiled.properties.get("uuid").map(String::as_str),
+                Some(head_uuid),
+                "head at {position:?}"
+            );
+            assert_eq!(
+                profiled.properties.get("skin_texture").map(String::as_str),
+                Some(skin),
+                "head at {position:?}"
+            );
+            assert_eq!(
+                profiled.properties.get("slim").map(String::as_str),
+                Some("true"),
+                "head at {position:?}"
+            );
+        }
+        assert!(
+            !input_at(source, (5, 3, 4)).properties.contains_key("uuid"),
+            "a head without a profile keeps the plain input"
+        );
+        assert_eq!(source.block_count(), 3);
+        assert_eq!(source.block_entity_count(), 2);
+    };
+
+    let dense =
+        CompactBlocks::from_schematic(world.clone(), None, None, false, &|| Ok(())).unwrap();
+    assert_heads(&dense);
+
+    let bytes = nucleation::formats::litematic::to_litematic(&world).unwrap();
+    let streamed = decoded_source(&bytes);
+    assert_heads(&streamed);
 }
