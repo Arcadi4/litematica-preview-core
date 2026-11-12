@@ -1,6 +1,6 @@
 [package]
 name = "litematica-preview-core"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Bounded Minecraft schematic decoding and streaming mesh generation"
 license = "AGPL-3.0-only"
@@ -16,7 +16,9 @@ crate-type = ["rlib"]
 
 
 [dependencies]
-nucleation = { version = "0.12.1", default-features = false, features = ["meshing"] }
+nucleation = { version = "0.12.1", default-features = false, features = [
+  "meshing",
+] }
 schematic-mesher = "0.2.1"
 quartz_nbt = { version = "0.2.9", features = ["preserve_order"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
