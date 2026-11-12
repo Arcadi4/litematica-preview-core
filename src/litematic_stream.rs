@@ -5,7 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Cursor, Read};
 
 use flate2::read::GzDecoder;
+use nucleation::block_entity::BlockEntity;
 use nucleation::formats::limits::DecodeLimits;
+use nucleation::meshing::player_heads::{self, PlayerProfile};
 use nucleation::{BlockState, BoundingBox, Entity};
 use quartz_nbt::{io::Flavor, NbtCompound, NbtList, NbtTag};
 use schematic_mesher::BlockPosition;
@@ -34,6 +36,7 @@ struct RegionFields {
     entity_count: usize,
     tiles: Tiles,
     tile_count: usize,
+    profiles: Vec<(Position, PlayerProfile)>,
 }
 
 impl Default for RegionFields {
@@ -46,6 +49,7 @@ impl Default for RegionFields {
             entity_count: 0,
             tiles: Ok(HashSet::new()),
             tile_count: 0,
+            profiles: Vec::new(),
         }
     }
 }
@@ -65,6 +69,8 @@ struct PreparedRegion {
     packed: PackedSpan,
     palette: Vec<BlockState>,
     mapping: Vec<PaletteEntry>,
+    heads: HashMap<Position, PlayerProfile>,
+    source: usize,
 }
 
 struct Input<'a, F> {
@@ -173,6 +179,12 @@ enum Keep {
     EntityData,
     Item,
     Tile,
+    TileProfile,
+    ProfileUuid,
+    ProfileProperties,
+    ProfileProperty,
+    ProfileTextureList,
+    ProfileTexture,
     String,
     Int,
     SmallInt,
@@ -214,6 +226,25 @@ impl Keep {
             Self::Tile => match name {
                 "Pos" => Self::TilePosition,
                 "x" | "y" | "z" => Self::SmallInt,
+                "profile" | "SkullOwner" => Self::TileProfile,
+                _ => Self::None,
+            },
+            Self::TileProfile => match name {
+                "id" | "name" | "Name" | "texture" | "model" => Self::String,
+                "Id" => Self::ProfileUuid,
+                "properties" | "Properties" => Self::ProfileProperties,
+                _ => Self::None,
+            },
+            Self::ProfileProperties => match name {
+                "textures" => Self::ProfileTextureList,
+                _ => Self::None,
+            },
+            Self::ProfileProperty => match name {
+                "name" | "Name" | "value" | "Value" => Self::String,
+                _ => Self::None,
+            },
+            Self::ProfileTexture => match name {
+                "Value" | "value" => Self::String,
                 _ => Self::None,
             },
             _ => Self::None,
@@ -334,7 +365,21 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                     _ => 8,
                 };
                 let bytes = count.checked_mul(width).ok_or("NBT array size overflow")?;
-                if tag == 11 && matches!(keep, Keep::TilePosition) {
+                if tag == 11 && matches!(keep, Keep::ProfileUuid) {
+                    if count == 4 {
+                        let mut values = Vec::new();
+                        values
+                            .try_reserve_exact(4)
+                            .map_err(|error| error.to_string())?;
+                        for _ in 0..4 {
+                            values.push(i32::from_be_bytes(self.input.number()?));
+                        }
+                        Ok(Some(NbtTag::IntArray(values)))
+                    } else {
+                        self.input.skip(bytes)?;
+                        Ok(None)
+                    }
+                } else if tag == 11 && matches!(keep, Keep::TilePosition) {
                     let mut values = Vec::new();
                     values
                         .try_reserve_exact(count.min(3))
@@ -350,7 +395,14 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                 }
             }
             8 => Ok(self
-                .string(matches!(keep, Keep::String))?
+                .string(matches!(
+                    keep,
+                    Keep::String
+                        | Keep::TileProfile
+                        | Keep::ProfileUuid
+                        | Keep::ProfileProperty
+                        | Keep::ProfileTexture
+                ))?
                 .map(NbtTag::String)),
             9 => {
                 let (child, count) = self.list()?;
@@ -360,6 +412,11 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                     Keep::Pose if child == 5 => count,
                     Keep::Armor if child == 10 => count.min(4),
                     _ => 0,
+                };
+                let element = match keep {
+                    Keep::ProfileProperties => Keep::ProfileProperty,
+                    Keep::ProfileTextureList => Keep::ProfileTexture,
+                    _ => Keep::None,
                 };
                 let mut values = Vec::new();
                 for index in 0..count {
@@ -374,7 +431,7 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                         self.payload(
                             child,
                             depth + 1,
-                            if index < take { Keep::Item } else { Keep::None },
+                            if index < take { Keep::Item } else { element },
                         )?
                     };
                     if let Some(value) = value {
@@ -382,7 +439,8 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                         values.push(value);
                     }
                 }
-                Ok((take != 0).then(|| NbtTag::List(NbtList::from(values))))
+                Ok((take != 0 || !matches!(element, Keep::None))
+                    .then(|| NbtTag::List(NbtList::from(values))))
             }
             10 => {
                 let retain = matches!(
@@ -394,6 +452,10 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                         | Keep::EntityData
                         | Keep::Item
                         | Keep::Tile
+                        | Keep::TileProfile
+                        | Keep::ProfileProperties
+                        | Keep::ProfileProperty
+                        | Keep::ProfileTexture
                 );
                 let mut compound = NbtCompound::new();
                 let mut count = 0;
@@ -481,6 +543,16 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                                 .try_reserve(1)
                                 .map_err(|error| error.to_string())?;
                             positions.insert(position);
+                            let block_entity = BlockEntity::from_nbt(&entity);
+                            if let Some(profile) =
+                                player_heads::read_profile(block_entity.nbt.as_ref())
+                            {
+                                fields
+                                    .profiles
+                                    .try_reserve(1)
+                                    .map_err(|error| error.to_string())?;
+                                fields.profiles.push((position, profile));
+                            }
                         }
                         (result @ Ok(_), Err(error)) => *result = Err(error),
                         _ => {}
@@ -538,6 +610,7 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                         "TileEntities" => {
                             fields.tiles = Ok(HashSet::new());
                             fields.tile_count = 0;
+                            fields.profiles.clear();
                         }
                         _ => {}
                     }
@@ -660,6 +733,7 @@ pub(super) fn read(
                 .checked_sub(input.offset)
                 .ok_or("overlapping packed spans")?,
         )?;
+        builder.set_source_rank(region.source);
         if let Some(count) = thread_count {
             visit_parallel(
                 &mut input,
@@ -746,6 +820,7 @@ fn prepare(
             return Err("entity or block-entity limit exceeded".into());
         }
         builder.begin_source()?;
+        let source = builder.source_rank();
         let mapping = builder.register_palette(&palette)?;
         // Give this region's entities a later source rank than its blocks.
         builder.begin_source()?;
@@ -762,6 +837,10 @@ fn prepare(
             super::offset_position(position, min)?;
         }
         builder.add_block_entities(tiles.len())?;
+        let mut heads = HashMap::new();
+        for (position, profile) in fields.profiles {
+            heads.insert(super::offset_position(position, min)?, profile);
+        }
         prepared.try_reserve(1).map_err(|error| error.to_string())?;
         prepared.push(PreparedRegion {
             min,
@@ -775,6 +854,8 @@ fn prepare(
             packed,
             palette,
             mapping,
+            heads,
+            source,
         });
     }
     if total_volume > limits.max_volume || region_count > limits.max_regions {
@@ -822,6 +903,12 @@ fn visit<F: Fn() -> Result<(), String>>(
             region.min.1 + (index / region.plane) as i32,
             region.min.2 + ((index / region.width) % region.length) as i32,
         );
+        if !region.heads.is_empty() && player_heads::is_player_head(&state.name) {
+            if let Some(profile) = region.heads.get(&(position.x, position.y, position.z)) {
+                builder.push_head(position, state, profile, true)?;
+                continue;
+            }
+        }
         builder.push_block(position, &region.mapping[palette_index])?;
     }
     Ok(())
@@ -859,6 +946,7 @@ fn visit_parallel<F: Fn() -> Result<(), String>>(
             let mask = 1u64.checked_shl(region.bits).unwrap_or(0).wrapping_sub(1);
             let mut blocks = Vec::new();
             blocks.try_reserve_exact(count).map_err(|e| e.to_string())?;
+            let mut heads = Vec::new();
             for offset in 0..count {
                 if offset % 1024 == 0 {
                     crate::parallel::check_cancelled(cancelled)?;
@@ -886,13 +974,22 @@ fn visit_parallel<F: Fn() -> Result<(), String>>(
                 );
                 let palette_index = u32::try_from(palette_index)
                     .map_err(|_| "packed block palette index exceeds u32")?;
+                if !region.heads.is_empty() && player_heads::is_player_head(&state.name) {
+                    if let Some(profile) = region.heads.get(&(position.x, position.y, position.z)) {
+                        heads.push((position, state.clone(), profile.clone()));
+                        continue;
+                    }
+                }
                 blocks.push((position, palette_index));
             }
-            Ok(blocks)
+            Ok((blocks, heads))
         },
-        |blocks| {
+        |(blocks, heads)| {
             for (position, palette_index) in blocks {
                 builder.push_block(position, &region.mapping[palette_index as usize])?;
+            }
+            for (position, state, profile) in heads {
+                builder.push_head(position, &state, &profile, true)?;
             }
             Ok(())
         },

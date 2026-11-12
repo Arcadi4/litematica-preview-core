@@ -2,13 +2,14 @@
 //!
 //! Nucleation 0.10.14 block/entity and chunk scheduling; the MIT license
 //! and copyright notice are in ThirdParty/Nucleation-LICENSE.txt.
+use nucleation::meshing::player_heads::{self, PlayerProfile};
 use nucleation::meshing::{MeshConfig, MeshOutput, ResourcePackSource};
 use nucleation::{BlockState, Entity, NbtValue, UniversalSchematic};
 use schematic_mesher::resolver::ModelResolver;
 use schematic_mesher::{
     BlockPosition, BoundingBox, InputBlock, MesherConfig, ResourcePack, TextureAtlas,
 };
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 mod atlas;
 mod builder;
@@ -267,7 +268,7 @@ pub(crate) struct CompactBlocksBuilder {
     chunks: HashMap<ChunkCoord, ChunkBlocks>,
     palette: Vec<InputBlock>,
     states: HashMap<BlockState, u32>,
-    entities: HashMap<String, u32>,
+    inputs: HashMap<String, u32>,
     chunk_size: Option<i32>,
     block_count: i64,
     block_entity_count: i64,
@@ -292,7 +293,7 @@ impl CompactBlocksBuilder {
             chunks: HashMap::new(),
             palette: Vec::new(),
             states: HashMap::new(),
-            entities: HashMap::new(),
+            inputs: HashMap::new(),
             chunk_size,
             block_count: 0,
             block_entity_count: 0,
@@ -319,6 +320,17 @@ impl CompactBlocksBuilder {
         order.try_reserve(1).map_err(|error| error.to_string())?;
         order.push((self.source, index));
         Ok(alias)
+    }
+
+    pub(crate) fn source_rank(&self) -> usize {
+        self.source
+    }
+
+    /// Set the rank for inputs pushed after preparation. Streaming preparation
+    /// assigns every palette and entity rank up front; per-region emission
+    /// restores its block rank so profiled heads sort with their own blocks.
+    pub(crate) fn set_source_rank(&mut self, source: usize) {
+        self.source = source;
     }
 
     pub(crate) fn register_palette(
@@ -379,22 +391,47 @@ impl CompactBlocksBuilder {
         // Identical entities share one palette entry: a build packed with the
         // same mob would otherwise hold a property map per entity. Each push
         // still gets its own source alias, so source ordering is unchanged.
-        let block = entity_to_input_block(entity);
-        let signature = input_signature(&block);
-        let index = if let Some(&index) = self.entities.get(&signature) {
-            index
-        } else {
-            let index = u32::try_from(self.palette.len())
-                .map_err(|_| "The schematic has too many block states.")?;
-            self.palette.try_reserve(1).map_err(|e| e.to_string())?;
-            self.palette.push(block);
-            self.entities.insert(signature, index);
-            index
-        };
+        let index = self.input_index(entity_to_input_block(entity))?;
         let index = self.source_index(index)?;
         // Entities render at block positions but never widen the occupied
         // block box, so a mob standing beside a build cannot change its fit.
         self.push_index(position, index, false)
+    }
+
+    /// Push a block whose input carries per-instance properties, such as a
+    /// player head's skin profile. A dense conversion pre-counts blocks from
+    /// the region; a streamed conversion counts each pushed block.
+    pub(crate) fn push_head(
+        &mut self,
+        position: BlockPosition,
+        state: &BlockState,
+        profile: &PlayerProfile,
+        counted: bool,
+    ) -> Result<(), String> {
+        if counted {
+            self.block_count = self
+                .block_count
+                .checked_add(1)
+                .ok_or("Block count exceeds i64.")?;
+        }
+        let mut block = block_state_to_input_block(state);
+        player_heads::apply_profile(&mut block, profile);
+        let index = self.input_index(block)?;
+        let index = self.source_index(index)?;
+        self.push_index(position, index, true)
+    }
+
+    fn input_index(&mut self, block: InputBlock) -> Result<u32, String> {
+        let signature = input_signature(&block);
+        if let Some(&index) = self.inputs.get(&signature) {
+            return Ok(index);
+        }
+        let index = u32::try_from(self.palette.len())
+            .map_err(|_| "The schematic has too many block states.")?;
+        self.palette.try_reserve(1).map_err(|e| e.to_string())?;
+        self.palette.push(block);
+        self.inputs.insert(signature, index);
+        Ok(index)
     }
 
     pub(crate) fn add_block_entities(&mut self, count: usize) -> Result<(), String> {
@@ -492,7 +529,20 @@ impl CompactBlocks {
                     i64::try_from(region.count_blocks()).map_err(|_| "Block count exceeds i64.")?,
                 )
                 .ok_or("Block count exceeds i64.")?;
-            let remap = builder.register_palette(&region.get_palette())?;
+            let palette = region.get_palette();
+            let remap = builder.register_palette(&palette)?;
+            let head_list = head_profiles(&region);
+            let heads_present = !head_list.is_empty();
+            let heads: HashSet<(i32, i32, i32)> =
+                head_list.iter().map(|(position, _, _)| *position).collect();
+            let head_states: Vec<bool> = if heads_present {
+                palette
+                    .iter()
+                    .map(|state| player_heads::is_player_head(&state.name))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let tight = region.get_tight_bounds();
             let cell_count = tight.as_ref().map_or(0, |bounds| {
                 let dimension = |min: i32, max: i32| (i64::from(max) - i64::from(min) + 1) as usize;
@@ -541,15 +591,21 @@ impl CompactBlocks {
                             let entry = remap
                                 .get(state as usize)
                                 .ok_or("The schematic contains an invalid palette index.")?;
-                            if let Some(state) = entry.index {
-                                converted.push((BlockPosition::new(x, y, z), state));
+                            if let Some(index) = entry.index {
+                                if heads_present
+                                    && head_states[state as usize]
+                                    && heads.contains(&(x, y, z))
+                                {
+                                    continue;
+                                }
+                                converted.push((BlockPosition::new(x, y, z), index));
                             }
                         }
                         Ok(converted)
                     },
                     |converted| {
-                        for (position, state) in converted {
-                            builder.push_index(position, state, true)?;
+                        for (position, index) in converted {
+                            builder.push_index(position, index, true)?;
                         }
                         Ok(())
                     },
@@ -560,10 +616,24 @@ impl CompactBlocks {
                     let entry = remap
                         .get(state as usize)
                         .ok_or("The schematic contains an invalid palette index.")?;
-                    if let Some(state) = entry.index {
-                        builder.push_index(BlockPosition::new(x, y, z), state, true)?;
+                    if let Some(index) = entry.index {
+                        if heads_present
+                            && head_states[state as usize]
+                            && heads.contains(&(x, y, z))
+                        {
+                            continue;
+                        }
+                        builder.push_index(BlockPosition::new(x, y, z), index, true)?;
                     }
                 }
+            }
+            for (position, state, profile) in head_list {
+                builder.push_head(
+                    BlockPosition::new(position.0, position.1, position.2),
+                    &state,
+                    &profile,
+                    false,
+                )?;
             }
             for entity in &region.entities {
                 builder.push_entity(entity)?;
@@ -933,6 +1003,24 @@ fn is_air(name: &str) -> bool {
         name,
         "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
     )
+}
+
+/// Skins of placed player heads, in block-entity order. A head without a
+/// profile keeps its plain block-state input and the mesher's default-skin
+/// fallback.
+fn head_profiles(region: &nucleation::Region) -> Vec<((i32, i32, i32), BlockState, PlayerProfile)> {
+    region
+        .block_entities
+        .iter()
+        .filter_map(|(position, entity)| {
+            let state = region.get_block(position.0, position.1, position.2)?;
+            if !player_heads::is_player_head(&state.name) {
+                return None;
+            }
+            let profile = player_heads::read_profile(entity.nbt.as_ref())?;
+            Some((position, state.clone(), profile))
+        })
+        .collect()
 }
 
 /// A stable identity for an [`InputBlock`], whose property map cannot key a
