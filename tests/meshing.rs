@@ -1,4 +1,4 @@
-use litematica_preview_core::{decode, load_chunks, mesh_config, PreviewOptions};
+use litematica_preview_core::{decode, load_chunks, mesh_config, PreviewInfo, PreviewOptions};
 use std::cell::Cell;
 
 #[path = "../src/batch/tests/support.rs"]
@@ -632,4 +632,67 @@ fn first_use_textures_are_delivered_once_across_batches() {
     assert_eq!(batches[0].info.texture_count, 2);
     assert_eq!(batches[1].info.texture_count, 2);
     assert_eq!(info.texture_count, 2);
+}
+
+/// Mesh one schematic with the test pack at the given chunk size.
+fn preview_info(source: &nucleation::UniversalSchematic, chunk_size: Option<u16>) -> PreviewInfo {
+    let bytes = nucleation::formats::litematic::to_litematic(source).unwrap();
+    load_chunks(
+        &bytes,
+        &test_pack(),
+        PreviewOptions {
+            chunk_size,
+            ..PreviewOptions::default()
+        },
+        |_| Ok(()),
+        |_, _| Ok(()),
+        || Ok(()),
+    )
+    .unwrap()
+}
+
+#[test]
+fn fractional_entity_positions_mesh_where_the_entities_stand() {
+    let mut source = schematic(&[(200, 0, 0, "minecraft:stone")]);
+    // Two creepers inside one block cell. Snapping each to the cell center
+    // would stack them at one point instead of keeping their spacing.
+    source.add_entity(nucleation::Entity::new(
+        "minecraft:creeper".into(),
+        (4.1, 2.0, 4.1),
+    ));
+    source.add_entity(nucleation::Entity::new(
+        "minecraft:creeper".into(),
+        (4.9, 2.6, 4.9),
+    ));
+    let info = preview_info(&source, None);
+    let creeper_triangles = 72;
+    assert_eq!(info.triangle_count, 12 + 2 * creeper_triangles);
+    // The models are half a block wide, so the pair spans 3.35..4.65 across x
+    // rather than the 3.75..4.25 of block-centered models.
+    assert!((info.min[0] - 3.35).abs() < 1e-4, "x min {}", info.min[0]);
+    // Creeper legs reach 0.375 either side of the model center along z.
+    assert!((info.max[2] - 4.775).abs() < 1e-4, "z max {}", info.max[2]);
+    // The second creeper stands 0.6 above the first: feet at 2.1 plus the
+    // model's 1.625 height put its top at 3.725.
+    assert!((info.max[1] - 3.725).abs() < 1e-4, "y max {}", info.max[1]);
+}
+
+#[test]
+fn entity_only_chunks_survive_chunking() {
+    let mut source = schematic(&[(0, 0, 0, "minecraft:stone")]);
+    source.add_entity(nucleation::Entity::new(
+        "minecraft:creeper".into(),
+        (100.4, 2.0, 100.7),
+    ));
+    let chunk_size = 16;
+    let info = preview_info(&source, Some(chunk_size));
+    assert_eq!(info.triangle_count, 12 + 72);
+    // The creeper's half-block model is centered on (99.9, 100.2) in the
+    // mesher's world, which is half a block from schematic coordinates.
+    assert!((info.max[0] - 100.15).abs() < 1e-4, "x max {}", info.max[0]);
+    assert!(
+        (info.max[2] - 100.575).abs() < 1e-4,
+        "z max {}",
+        info.max[2]
+    );
 }
