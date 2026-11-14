@@ -50,5 +50,8 @@ There is no Node.js tooling; every task is a cargo command.
 - Texture IDs are stream-wide; publish RGBA pixels only on first use and retain
   identity rather than image bytes. Atlas zero clamps without mipmaps; greedy
   textures repeat and can generate mipmaps.
+- `src/meshing/atlas.rs` packs the shared atlas. schematic-mesher 0.2.1 places a
+  tile wider than its atlas past the texture edge, so a tile read from a local
+  atlas is clamped and loses that edge.
 - `panic = "unwind"` is required: hosts recover from a panic in this crate, so a
   malformed schematic must not terminate their process or poison a cached pack.

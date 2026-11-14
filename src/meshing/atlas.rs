@@ -1,10 +1,10 @@
 //! Discover shared atlas tiles through the mesher's public APIs.
 
-use schematic_mesher::atlas::{AtlasBuilder, AtlasRegion, TextureAtlas};
+use schematic_mesher::atlas::{AtlasRegion, TextureAtlas};
 use schematic_mesher::mesher::element::MeshBuilder;
 use schematic_mesher::resource_pack::TextureData;
 use schematic_mesher::{BlockPosition, InputBlock, MesherConfig, ResourcePack};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Texture keys for these states include world position, so they require
 /// discovery at each actual position rather than one palette representative.
@@ -37,7 +37,7 @@ pub(super) fn build<'a>(
         sky_light_level: config.sky_light_level,
         enable_particles: config.enable_particles,
     };
-    let mut atlas = AtlasBuilder::new(config.atlas_max_size, config.atlas_padding);
+    let mut tiles = Vec::new();
     let mut discovered = HashSet::new();
 
     // `MeshBuilder` provides the canonical missing-texture sentinel, which
@@ -45,7 +45,7 @@ pub(super) fn build<'a>(
     let (_, _, _, missing, _, _) = MeshBuilder::new(pack, &discovery, None, None, None)
         .build(None)
         .map_err(|error| error.to_string())?;
-    collect_tiles(missing, &mut atlas, &mut discovered)?;
+    collect_tiles(missing, &mut tiles, &mut discovered)?;
 
     for (pos, block) in blocks {
         if !discovery.include_air && block.is_air() {
@@ -65,7 +65,7 @@ pub(super) fn build<'a>(
             // resource-pack entries with the same name.
             if !path.starts_with('_') {
                 if let Some(texture) = pack.get_texture(path) {
-                    atlas.add_texture(path.clone(), texture.first_frame());
+                    tiles.push((path.clone(), texture.first_frame()));
                     discovered.insert(path.clone());
                     continue;
                 }
@@ -78,25 +78,136 @@ pub(super) fn build<'a>(
             let (_, _, _, local, _, _) = representative
                 .build(None)
                 .map_err(|error| error.to_string())?;
-            collect_tiles(local, &mut atlas, &mut discovered)?;
+            collect_tiles(local, &mut tiles, &mut discovered)?;
         }
     }
-    // Final placement is deterministic by height and key, independent of discovery order.
-    atlas.build().map_err(|error| error.to_string())
+    pack_tiles(tiles, config.atlas_max_size, config.atlas_padding)
 }
 
 fn collect_tiles(
     local: TextureAtlas,
-    atlas: &mut AtlasBuilder,
+    tiles: &mut Vec<(String, TextureData)>,
     discovered: &mut HashSet<String>,
 ) -> Result<(), String> {
     for (path, region) in &local.regions {
         if !discovered.contains(path) {
-            atlas.add_texture(path.clone(), extract_tile(&local, region)?);
+            tiles.push((path.clone(), extract_tile(&local, region)?));
             discovered.insert(path.clone());
         }
     }
     Ok(())
+}
+
+/// Pack tiles into a deterministic power-of-two atlas. Placement is by height
+/// and then key, independent of discovery order.
+///
+/// The first candidate size covers the padded tile area, then grows until it
+/// holds the widest and tallest tiles. The mesher's own builder places a tile
+/// wider than its atlas past the texture edge, which leaves a region outside
+/// `0..1` for clamped sampling to clip.
+fn pack_tiles(
+    mut tiles: Vec<(String, TextureData)>,
+    max_size: u32,
+    padding: u32,
+) -> Result<TextureAtlas, String> {
+    if tiles.is_empty() {
+        return Ok(TextureAtlas::empty());
+    }
+    tiles.sort_unstable_by(|a, b| b.1.height.cmp(&a.1.height).then_with(|| a.0.cmp(&b.0)));
+    let padded = |texture: &TextureData| {
+        (
+            u64::from(texture.width) + u64::from(padding) * 2,
+            u64::from(texture.height) + u64::from(padding) * 2,
+        )
+    };
+    let mut area = 0u64;
+    let mut widest = 1u64;
+    for (_, texture) in &tiles {
+        let (width, height) = padded(texture);
+        area = area.saturating_add(width.saturating_mul(height));
+        widest = widest.max(width.max(height));
+    }
+    let min_size = (area as f64).sqrt().ceil() as u64;
+    let maximum = u64::from(max_size);
+    let mut size = 64u64;
+    while size < min_size && size < maximum {
+        size *= 2;
+    }
+    while size < widest && size < maximum {
+        size *= 2;
+    }
+    loop {
+        if size > maximum {
+            return Err(format!(
+                "Atlas building error: Failed to pack {} textures into {max_size}x{max_size} atlas",
+                tiles.len()
+            ));
+        }
+        if let Some(atlas) = try_pack(&tiles, size as u32, padding) {
+            return Ok(atlas);
+        }
+        size *= 2;
+    }
+}
+
+fn try_pack(tiles: &[(String, TextureData)], size: u32, padding: u32) -> Option<TextureAtlas> {
+    let length = usize::try_from(u64::from(size) * u64::from(size) * 4).ok()?;
+    let mut pixels = vec![0u8; length];
+    let mut regions = HashMap::new();
+    let (mut cursor_x, mut cursor_y, mut row_height) = (0u32, 0u32, 0u32);
+    for (path, texture) in tiles {
+        let width = texture.width.checked_add(padding.checked_mul(2)?)?;
+        let height = texture.height.checked_add(padding.checked_mul(2)?)?;
+        if width > size || height > size {
+            return None;
+        }
+        if width > size - cursor_x {
+            cursor_x = 0;
+            cursor_y = cursor_y.checked_add(row_height)?;
+            row_height = 0;
+        }
+        if height > size - cursor_y {
+            return None;
+        }
+        // Padding repeats the edge pixel, so bilinear sampling cannot bleed a
+        // neighboring tile into this one.
+        for row in 0..height {
+            for column in 0..width {
+                let source_x = column
+                    .saturating_sub(padding)
+                    .min(texture.width.saturating_sub(1));
+                let source_y = row
+                    .saturating_sub(padding)
+                    .min(texture.height.saturating_sub(1));
+                let source = (source_y as usize * texture.width as usize + source_x as usize) * 4;
+                let destination =
+                    ((cursor_y + row) as usize * size as usize + (cursor_x + column) as usize) * 4;
+                if let Some(pixel) = texture.pixels.get(source..source + 4) {
+                    pixels[destination..destination + 4].copy_from_slice(pixel);
+                }
+            }
+        }
+        let left = cursor_x + padding;
+        let top = cursor_y + padding;
+        let extent = size as f32;
+        regions.insert(
+            path.clone(),
+            AtlasRegion {
+                u_min: left as f32 / extent,
+                v_min: top as f32 / extent,
+                u_max: (left + texture.width) as f32 / extent,
+                v_max: (top + texture.height) as f32 / extent,
+            },
+        );
+        cursor_x += width;
+        row_height = row_height.max(height);
+    }
+    Some(TextureAtlas {
+        width: size,
+        height: size,
+        pixels,
+        regions,
+    })
 }
 
 fn extract_tile(atlas: &TextureAtlas, region: &AtlasRegion) -> Result<TextureData, String> {
@@ -105,10 +216,12 @@ fn extract_tile(atlas: &TextureAtlas, region: &AtlasRegion) -> Result<TextureDat
     // global packing regenerates edge-clamped padding from the interior pixels.
     let edge = |uv: f32, extent: u32| -> Result<u32, String> {
         let pixel = uv * extent as f32;
-        if !pixel.is_finite() || pixel < 0.0 || pixel > extent as f32 || pixel.fract() != 0.0 {
+        if !pixel.is_finite() || pixel < 0.0 || pixel.fract() != 0.0 {
             return Err("Mesher returned a nonintegral atlas region".into());
         }
-        Ok(pixel as u32)
+        // The mesher's builder packs a tile wider than its atlas flush left and
+        // reports the right edge past the texture, so the tile loses that edge.
+        Ok((pixel as u32).min(extent))
     };
     let x = edge(region.u_min, atlas.width)?;
     let y = edge(region.v_min, atlas.height)?;
@@ -140,16 +253,17 @@ mod tests {
     #[test]
     fn repacking_preserves_rectangular_pixels_and_regenerates_padding() {
         let pixels: Vec<u8> = (0..24).collect();
-        let mut source = AtlasBuilder::new(256, 3);
-        source.add_texture("_dynamic".into(), TextureData::new(3, 2, pixels.clone()));
-        let source = source.build().unwrap();
+        let source = pack_tiles(
+            vec![("_dynamic".into(), TextureData::new(3, 2, pixels.clone()))],
+            256,
+            3,
+        )
+        .unwrap();
         let tile = extract_tile(&source, source.get_region("_dynamic").unwrap()).unwrap();
         assert_eq!((tile.width, tile.height), (3, 2));
         assert_eq!(tile.pixels, pixels);
 
-        let mut target = AtlasBuilder::new(256, 1);
-        target.add_texture("_dynamic".into(), tile);
-        let target = target.build().unwrap();
+        let target = pack_tiles(vec![("_dynamic".into(), tile)], 256, 1).unwrap();
         let region = target.get_region("_dynamic").unwrap();
         let x = (region.u_min * target.width as f32) as usize;
         let y = (region.v_min * target.height as f32) as usize;
