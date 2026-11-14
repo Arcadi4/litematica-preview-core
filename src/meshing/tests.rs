@@ -1337,14 +1337,15 @@ fn sign_entity(
     entity
 }
 
-/// Board text lives in a block entity, so a written sign must replace the plain
-/// block-state input in both conversion paths and composite a text tile into the
-/// shared atlas.
+/// Board text lives in a block entity. Both conversion paths keep the text on
+/// the palette entry, and both must draw it from the shared font tile instead
+/// of a board tile per text.
 #[test]
-fn sign_text_reaches_both_conversion_paths_and_the_shared_atlas() {
+fn sign_text_draws_glyphs_from_the_shared_font_tile() {
     const WRITTEN: (i32, i32, i32) = (2, 3, 4);
     const HANGING: (i32, i32, i32) = (3, 3, 4);
-    const BLANK: (i32, i32, i32) = (5, 3, 4);
+    const WALL: (i32, i32, i32) = (5, 3, 4);
+    const BLANK: (i32, i32, i32) = (7, 3, 4);
     let mut world = UniversalSchematic::new("signs".into());
     for (x, y, z) in [WRITTEN, BLANK] {
         world.set_block(x, y, z, &BlockState::new("minecraft:oak_sign"));
@@ -1355,7 +1356,13 @@ fn sign_text_reaches_both_conversion_paths_and_the_shared_atlas() {
         HANGING.2,
         &BlockState::new("minecraft:oak_hanging_sign"),
     );
-    for (position, message) in [(WRITTEN, "hi"), (HANGING, "hang")] {
+    world.set_block(
+        WALL.0,
+        WALL.1,
+        WALL.2,
+        &BlockState::new("minecraft:oak_wall_sign").with_property("facing", "south"),
+    );
+    for (position, message) in [(WRITTEN, "hi"), (HANGING, "hang"), (WALL, "w")] {
         let message = format!("{{\"text\":\"{message}\"}}");
         world.set_block_entity(
             nucleation::block_position::BlockPosition::new(position.0, position.1, position.2),
@@ -1365,8 +1372,8 @@ fn sign_text_reaches_both_conversion_paths_and_the_shared_atlas() {
 
     let pack = test_pack();
     let config = crate::mesh_config();
-    // A light-blue dye draws in aqua glyphs, absent from every other fixture texture.
-    let dye = [85, 255, 255, 255];
+    // A light-blue dye draws in aqua glyphs.
+    let dye = [85.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0];
     let assert_signs = |source: &CompactBlocks| {
         let written = input_at(source, WRITTEN);
         assert_eq!(
@@ -1385,26 +1392,21 @@ fn sign_text_reaches_both_conversion_paths_and_the_shared_atlas() {
             !input_at(source, BLANK).properties.contains_key("text1"),
             "a sign without a block entity keeps the plain input"
         );
-        assert_eq!(source.block_count(), 3, "a written sign counts once");
+        assert_eq!(source.block_count(), 4, "a written sign counts once");
 
         let atlas = source
             .atlas(&pack, &mesher_config(&config))
             .expect("shared atlas");
         assert!(
-            atlas.regions.keys().any(|path| path.starts_with("_sign/")),
-            "the written board composites its own tile"
+            atlas.regions.contains_key(super::sign_board::FONT_TILE),
+            "the font tile carries every board"
         );
-        assert!(
-            atlas
-                .regions
-                .keys()
-                .any(|path| path.starts_with("_hanging_sign/")),
-            "the hanging board composites its own tile"
-        );
-        assert!(
-            atlas.pixels.chunks_exact(4).any(|pixel| pixel == dye),
-            "the composited board carries the dye-colored glyphs"
-        );
+        for path in atlas.regions.keys() {
+            assert!(
+                !path.starts_with("_sign/") && !path.starts_with("_hanging_sign/"),
+                "no board composites its own tile: {path}"
+            );
+        }
     };
 
     let dense =
@@ -1413,4 +1415,51 @@ fn sign_text_reaches_both_conversion_paths_and_the_shared_atlas() {
 
     let bytes = nucleation::formats::litematic::to_litematic(&world).unwrap();
     assert_signs(&decoded_source(&bytes));
+
+    // Standing, hanging, and wall boards must draw their glyphs: two on the
+    // standing board, four on each side of the hanging board, and one on each
+    // side of the wall board.
+    with_meshes(world, &pack, &config, None, |chunks| {
+        let mut fills = 0;
+        let mut glow = 0;
+        let mut chunks_seen = 0;
+        let shade = [dye[0] * 0.25, dye[1] * 0.25, dye[2] * 0.25];
+        let near = |color: [f32; 4], expected: [f32; 3]| {
+            (0..3).all(|axis| (color[axis] - expected[axis]).abs() < 1e-6)
+        };
+        for chunk in chunks {
+            let mesh = chunk.unwrap();
+            let Some(font) = mesh.atlas.get_region(super::sign_board::FONT_TILE) else {
+                continue;
+            };
+            chunks_seen += 1;
+            for indices in mesh.cutout.indices.chunks_exact(3) {
+                let inside = indices.iter().all(|&index| {
+                    let uv = mesh.cutout.uvs[index as usize];
+                    uv[0] >= font.u_min - 1e-6
+                        && uv[0] <= font.u_max + 1e-6
+                        && uv[1] >= font.v_min - 1e-6
+                        && uv[1] <= font.v_max + 1e-6
+                });
+                if !inside {
+                    continue;
+                }
+                let color = mesh.cutout.colors[indices[0] as usize];
+                if near(color, dye) {
+                    fills += 1;
+                } else if near(color, shade) {
+                    glow += 1;
+                } else {
+                    panic!("unexpected glyph color {color:?}");
+                }
+            }
+        }
+        assert!(chunks_seen > 0, "the font tile reaches the mesh atlas");
+        assert_eq!(fills, 12 * 2, "twelve glyph quads, two triangles each");
+        assert_eq!(
+            glow,
+            12 * 8 * 2,
+            "glow copies every glyph in eight directions"
+        );
+    });
 }

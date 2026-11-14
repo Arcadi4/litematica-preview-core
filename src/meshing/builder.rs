@@ -119,6 +119,11 @@ pub(super) fn mesh(
     let mut atlas_config = config.clone();
     atlas_config.greedy_meshing = false;
     let source_water = InputBlock::new("minecraft:water").with_property("level", "0");
+    // Board text never reaches the mesher, so it keeps the plain board tile.
+    // The stripped copies live once per palette entry, and the glyph pass
+    // below draws the characters from the shared font tile.
+    let plain: Vec<Option<InputBlock>> = palette.iter().map(super::sign_board::strip).collect();
+    let mut boards: Vec<(BlockPosition, usize)> = Vec::new();
     // A second builder is only needed for cutout/missing-texture states in greedy
     // mode. Finish each builder before starting the next to bound scratch memory.
     for pass in [Pass::Fluids, Pass::Greedy, Pass::Atlas] {
@@ -158,8 +163,13 @@ pub(super) fn mesh(
             let block = match (pass, &wet[state as usize]) {
                 (Pass::Fluids, Wet::Waterlogged(_)) => &source_water,
                 (_, Wet::Waterlogged(dry)) => dry,
-                _ => &palette[state as usize],
+                _ => plain[state as usize]
+                    .as_ref()
+                    .unwrap_or(&palette[state as usize]),
             };
+            if plain[state as usize].is_some() {
+                boards.push((position, state as usize));
+            }
             builder
                 .add_block(position, block)
                 .map_err(|error| error.to_string())?;
@@ -190,6 +200,11 @@ pub(super) fn mesh(
                 transparent: into_layer(material.transparent_mesh),
                 texture_png: material.texture_png,
             });
+        }
+    }
+    if let Some(font) = shared_atlas.get_region(super::sign_board::FONT_TILE) {
+        for (position, state) in boards {
+            super::sign_board::emit(pack, font, &palette[state], position, &mut output.cutout);
         }
     }
     tighten_layer(&mut output.opaque);

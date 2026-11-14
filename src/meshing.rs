@@ -14,6 +14,7 @@ use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 mod atlas;
 mod builder;
+mod sign_board;
 
 type ChunkCoord = (i32, i32, i32);
 

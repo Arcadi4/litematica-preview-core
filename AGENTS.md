@@ -55,8 +55,9 @@ There is no Node.js tooling; every task is a cargo command.
   atlas is clamped and loses that edge.
 - Sign board text lives in the block entity. The conversion forwards it as the
   sign input's `text1`..`text4`, `color`, and `glowing` properties, with the dye
-  name mapped to its formatting color. schematic-mesher composites the text into
-  a board tile, so each distinct text adds an atlas tile, and the same board
-  shows on every face the sign draws.
+  name mapped to its formatting color. `meshing/sign_board.rs` holds those
+  properties back from the mesher, so the mesher draws the plain board. The
+  module draws the characters as quads that sample one font tile, and the atlas
+  holds one font page for every board text.
 - `panic = "unwind"` is required: hosts recover from a panic in this crate, so a
   malformed schematic must not terminate their process or poison a cached pack.

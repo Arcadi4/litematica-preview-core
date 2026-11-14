@@ -47,10 +47,16 @@ pub(super) fn build<'a>(
         .map_err(|error| error.to_string())?;
     collect_tiles(missing, &mut tiles, &mut discovered)?;
 
+    let mut boards = false;
     for (pos, block) in blocks {
         if !discovery.include_air && block.is_air() {
             continue;
         }
+        // Board text composites into a whole board tile. Discovery keeps the
+        // plain board instead, and the font tile carries the characters.
+        let plain = super::sign_board::strip(block);
+        boards |= plain.is_some();
+        let block = plain.as_ref().unwrap_or(block);
         let mut representative = MeshBuilder::new(pack, &discovery, None, None, None);
         representative
             .add_block(pos, block)
@@ -79,6 +85,11 @@ pub(super) fn build<'a>(
                 .build(None)
                 .map_err(|error| error.to_string())?;
             collect_tiles(local, &mut tiles, &mut discovered)?;
+        }
+    }
+    if boards {
+        if let Some(font) = super::sign_board::font_tile(pack) {
+            tiles.push((super::sign_board::FONT_TILE.to_owned(), font));
         }
     }
     pack_tiles(tiles, config.atlas_max_size, config.atlas_padding)

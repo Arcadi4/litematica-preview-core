@@ -76,6 +76,7 @@ pub(crate) fn test_pack() -> ResourcePackSource {
         "end_rod",
         "player_head",
         "oak_sign",
+        "oak_wall_sign",
         "oak_hanging_sign",
     ] {
         pack.add_model("minecraft", &format!("block/{name}"), BlockModel::default());
