@@ -1463,3 +1463,44 @@ fn sign_text_draws_glyphs_from_the_shared_font_tile() {
         );
     });
 }
+
+/// Every board text samples the same font tile, so the shared atlas does not
+/// grow with the count of written boards.
+#[test]
+fn distinct_board_texts_share_one_font_tile() {
+    let pack = test_pack();
+    let config = crate::mesh_config();
+    let atlas_for = |signs: i32| {
+        let mut world = UniversalSchematic::new("boards".into());
+        for index in 0..signs {
+            let position = (index, 3, 0);
+            world.set_block(
+                position.0,
+                position.1,
+                position.2,
+                &BlockState::new("minecraft:oak_sign"),
+            );
+            let message = format!("{{\"text\":\"board {index}\"}}");
+            world.set_block_entity(
+                nucleation::block_position::BlockPosition::new(position.0, position.1, position.2),
+                sign_entity(position, [message.as_str(), "", "", ""], "black", false),
+            );
+        }
+        let source = CompactBlocks::from_schematic(world, None, None, false, &|| Ok(())).unwrap();
+        source
+            .atlas(&pack, &mesher_config(&config))
+            .expect("shared atlas")
+    };
+    let one = atlas_for(1);
+    let many = atlas_for(64);
+    assert_eq!(
+        (many.width, many.height),
+        (one.width, one.height),
+        "64 board texts need no larger atlas than one"
+    );
+    let mut single: Vec<&String> = one.regions.keys().collect();
+    single.sort();
+    let mut repeated: Vec<&String> = many.regions.keys().collect();
+    repeated.sort();
+    assert_eq!(repeated, single, "no per-board tile enters the atlas");
+}
