@@ -2,6 +2,7 @@
 //!
 //! Nucleation 0.10.14 block/entity and chunk scheduling; the MIT license
 //! and copyright notice are in ThirdParty/Nucleation-LICENSE.txt.
+use crate::sign_text::{self, SignText};
 use nucleation::meshing::player_heads::{self, PlayerProfile};
 use nucleation::meshing::{MeshConfig, MeshOutput, ResourcePackSource};
 use nucleation::{BlockState, Entity, NbtValue, UniversalSchematic};
@@ -421,6 +422,28 @@ impl CompactBlocksBuilder {
         self.push_index(position, index, true)
     }
 
+    /// Push a sign block whose input carries the block entity's board text,
+    /// which the mesher composites into the board texture.
+    pub(crate) fn push_sign(
+        &mut self,
+        position: BlockPosition,
+        state: &BlockState,
+        text: &SignText,
+        counted: bool,
+    ) -> Result<(), String> {
+        if counted {
+            self.block_count = self
+                .block_count
+                .checked_add(1)
+                .ok_or("Block count exceeds i64.")?;
+        }
+        let mut block = block_state_to_input_block(state);
+        sign_text::apply(&mut block, text);
+        let index = self.input_index(block)?;
+        let index = self.source_index(index)?;
+        self.push_index(position, index, true)
+    }
+
     fn input_index(&mut self, block: InputBlock) -> Result<u32, String> {
         let signature = input_signature(&block);
         if let Some(&index) = self.inputs.get(&signature) {
@@ -543,6 +566,18 @@ impl CompactBlocks {
             } else {
                 Vec::new()
             };
+            let sign_list = sign_texts(&region);
+            let signs_present = !sign_list.is_empty();
+            let signs: HashSet<(i32, i32, i32)> =
+                sign_list.iter().map(|(position, _, _)| *position).collect();
+            let sign_states: Vec<bool> = if signs_present {
+                palette
+                    .iter()
+                    .map(|state| sign_text::is_sign(&state.name))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let tight = region.get_tight_bounds();
             let cell_count = tight.as_ref().map_or(0, |bounds| {
                 let dimension = |min: i32, max: i32| (i64::from(max) - i64::from(min) + 1) as usize;
@@ -598,6 +633,12 @@ impl CompactBlocks {
                                 {
                                     continue;
                                 }
+                                if signs_present
+                                    && sign_states[state as usize]
+                                    && signs.contains(&(x, y, z))
+                                {
+                                    continue;
+                                }
                                 converted.push((BlockPosition::new(x, y, z), index));
                             }
                         }
@@ -623,6 +664,12 @@ impl CompactBlocks {
                         {
                             continue;
                         }
+                        if signs_present
+                            && sign_states[state as usize]
+                            && signs.contains(&(x, y, z))
+                        {
+                            continue;
+                        }
                         builder.push_index(BlockPosition::new(x, y, z), index, true)?;
                     }
                 }
@@ -632,6 +679,14 @@ impl CompactBlocks {
                     BlockPosition::new(position.0, position.1, position.2),
                     &state,
                     &profile,
+                    false,
+                )?;
+            }
+            for (position, state, text) in sign_list {
+                builder.push_sign(
+                    BlockPosition::new(position.0, position.1, position.2),
+                    &state,
+                    &text,
                     false,
                 )?;
             }
@@ -1019,6 +1074,23 @@ fn head_profiles(region: &nucleation::Region) -> Vec<((i32, i32, i32), BlockStat
             }
             let profile = player_heads::read_profile(entity.nbt.as_ref())?;
             Some((position, state.clone(), profile))
+        })
+        .collect()
+}
+
+/// Board text of placed signs, in block-entity order. A sign without text
+/// keeps its plain block-state input and renders a blank board.
+fn sign_texts(region: &nucleation::Region) -> Vec<((i32, i32, i32), BlockState, SignText)> {
+    region
+        .block_entities
+        .iter()
+        .filter_map(|(position, entity)| {
+            let state = region.get_block(position.0, position.1, position.2)?;
+            if !sign_text::is_sign(&state.name) {
+                return None;
+            }
+            let text = sign_text::read(entity.nbt.as_ref())?;
+            Some((position, state.clone(), text))
         })
         .collect()
 }

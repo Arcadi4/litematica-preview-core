@@ -13,6 +13,7 @@ mod batch;
 mod decode;
 mod meshing;
 mod parallel;
+mod sign_text;
 mod stream;
 use batch::BatchPacker;
 pub use batch::{MeshBatch, MeshPart, Texture, VERTEX_STRIDE};

@@ -53,5 +53,10 @@ There is no Node.js tooling; every task is a cargo command.
 - `src/meshing/atlas.rs` packs the shared atlas. schematic-mesher 0.2.1 places a
   tile wider than its atlas past the texture edge, so a tile read from a local
   atlas is clamped and loses that edge.
+- Sign board text lives in the block entity. The conversion forwards it as the
+  sign input's `text1`..`text4`, `color`, and `glowing` properties, with the dye
+  name mapped to its formatting color. schematic-mesher composites the text into
+  a board tile, so each distinct text adds an atlas tile, and the same board
+  shows on every face the sign draws.
 - `panic = "unwind"` is required: hosts recover from a panic in this crate, so a
   malformed schematic must not terminate their process or poison a cached pack.

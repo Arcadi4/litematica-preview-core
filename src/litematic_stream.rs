@@ -13,6 +13,7 @@ use quartz_nbt::{io::Flavor, NbtCompound, NbtList, NbtTag};
 use schematic_mesher::BlockPosition;
 
 use crate::meshing::{CompactBlocks, CompactBlocksBuilder, PaletteEntry};
+use crate::sign_text::{self, SignText};
 
 const BUFFER_SIZE: usize = 64 * 1024;
 /// Checkpoint packed input every 4 MiB. The 64 KiB reader buffer avoids an IPC
@@ -37,6 +38,7 @@ struct RegionFields {
     tiles: Tiles,
     tile_count: usize,
     profiles: Vec<(Position, PlayerProfile)>,
+    signs: Vec<(Position, SignText)>,
 }
 
 impl Default for RegionFields {
@@ -50,6 +52,7 @@ impl Default for RegionFields {
             tiles: Ok(HashSet::new()),
             tile_count: 0,
             profiles: Vec::new(),
+            signs: Vec::new(),
         }
     }
 }
@@ -70,6 +73,7 @@ struct PreparedRegion {
     palette: Vec<BlockState>,
     mapping: Vec<PaletteEntry>,
     heads: HashMap<Position, PlayerProfile>,
+    signs: HashMap<Position, SignText>,
     source: usize,
 }
 
@@ -185,6 +189,9 @@ enum Keep {
     ProfileProperty,
     ProfileTextureList,
     ProfileTexture,
+    SignBoard,
+    SignMessages,
+    SignMessage,
     String,
     Int,
     SmallInt,
@@ -227,6 +234,16 @@ impl Keep {
                 "Pos" => Self::TilePosition,
                 "x" | "y" | "z" => Self::SmallInt,
                 "profile" | "SkullOwner" => Self::TileProfile,
+                "front_text" | "back_text" => Self::SignBoard,
+                "Text1" | "Text2" | "Text3" | "Text4" => Self::SignMessage,
+                "Color" => Self::String,
+                "GlowingText" => Self::Byte,
+                _ => Self::None,
+            },
+            Self::SignBoard => match name {
+                "messages" => Self::SignMessages,
+                "color" => Self::String,
+                "has_glowing_text" => Self::Byte,
                 _ => Self::None,
             },
             Self::TileProfile => match name {
@@ -394,16 +411,25 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                     Ok(None)
                 }
             }
-            8 => Ok(self
-                .string(matches!(
+            8 => {
+                let text = self.string(matches!(
                     keep,
                     Keep::String
                         | Keep::TileProfile
                         | Keep::ProfileUuid
                         | Keep::ProfileProperty
                         | Keep::ProfileTexture
-                ))?
-                .map(NbtTag::String)),
+                        | Keep::SignMessage
+                ))?;
+                Ok(match (keep, text) {
+                    // A board line beyond the retained length is dropped.
+                    (Keep::SignMessage, Some(text)) if text.len() > sign_text::MAX_LINE_BYTES => {
+                        None
+                    }
+                    (_, Some(text)) => Some(NbtTag::String(text)),
+                    (_, None) => None,
+                })
+            }
             9 => {
                 let (child, count) = self.list()?;
                 let take = match keep {
@@ -416,6 +442,7 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                 let element = match keep {
                     Keep::ProfileProperties => Keep::ProfileProperty,
                     Keep::ProfileTextureList => Keep::ProfileTexture,
+                    Keep::SignMessages => Keep::SignMessage,
                     _ => Keep::None,
                 };
                 let mut values = Vec::new();
@@ -456,6 +483,7 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                         | Keep::ProfileProperties
                         | Keep::ProfileProperty
                         | Keep::ProfileTexture
+                        | Keep::SignBoard
                 );
                 let mut compound = NbtCompound::new();
                 let mut count = 0;
@@ -553,6 +581,13 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                                     .map_err(|error| error.to_string())?;
                                 fields.profiles.push((position, profile));
                             }
+                            if let Some(text) = sign_text::read(block_entity.nbt.as_ref()) {
+                                fields
+                                    .signs
+                                    .try_reserve(1)
+                                    .map_err(|error| error.to_string())?;
+                                fields.signs.push((position, text));
+                            }
                         }
                         (result @ Ok(_), Err(error)) => *result = Err(error),
                         _ => {}
@@ -611,6 +646,7 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                             fields.tiles = Ok(HashSet::new());
                             fields.tile_count = 0;
                             fields.profiles.clear();
+                            fields.signs.clear();
                         }
                         _ => {}
                     }
@@ -841,6 +877,10 @@ fn prepare(
         for (position, profile) in fields.profiles {
             heads.insert(super::offset_position(position, min)?, profile);
         }
+        let mut signs = HashMap::new();
+        for (position, text) in fields.signs {
+            signs.insert(super::offset_position(position, min)?, text);
+        }
         prepared.try_reserve(1).map_err(|error| error.to_string())?;
         prepared.push(PreparedRegion {
             min,
@@ -855,6 +895,7 @@ fn prepare(
             palette,
             mapping,
             heads,
+            signs,
             source,
         });
     }
@@ -909,6 +950,12 @@ fn visit<F: Fn() -> Result<(), String>>(
                 continue;
             }
         }
+        if !region.signs.is_empty() && sign_text::is_sign(&state.name) {
+            if let Some(text) = region.signs.get(&(position.x, position.y, position.z)) {
+                builder.push_sign(position, state, text, true)?;
+                continue;
+            }
+        }
         builder.push_block(position, &region.mapping[palette_index])?;
     }
     Ok(())
@@ -947,6 +994,7 @@ fn visit_parallel<F: Fn() -> Result<(), String>>(
             let mut blocks = Vec::new();
             blocks.try_reserve_exact(count).map_err(|e| e.to_string())?;
             let mut heads = Vec::new();
+            let mut signs = Vec::new();
             for offset in 0..count {
                 if offset % 1024 == 0 {
                     crate::parallel::check_cancelled(cancelled)?;
@@ -980,16 +1028,25 @@ fn visit_parallel<F: Fn() -> Result<(), String>>(
                         continue;
                     }
                 }
+                if !region.signs.is_empty() && sign_text::is_sign(&state.name) {
+                    if let Some(text) = region.signs.get(&(position.x, position.y, position.z)) {
+                        signs.push((position, state.clone(), text.clone()));
+                        continue;
+                    }
+                }
                 blocks.push((position, palette_index));
             }
-            Ok((blocks, heads))
+            Ok((blocks, heads, signs))
         },
-        |(blocks, heads)| {
+        |(blocks, heads, signs)| {
             for (position, palette_index) in blocks {
                 builder.push_block(position, &region.mapping[palette_index as usize])?;
             }
             for (position, state, profile) in heads {
                 builder.push_head(position, &state, &profile, true)?;
+            }
+            for (position, state, text) in signs {
+                builder.push_sign(position, &state, &text, true)?;
             }
             Ok(())
         },
