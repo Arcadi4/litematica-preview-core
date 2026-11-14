@@ -1312,3 +1312,105 @@ fn player_head_profiles_reach_both_conversion_paths() {
     let streamed = decoded_source(&bytes);
     assert_heads(&streamed);
 }
+
+fn sign_entity(
+    position: (i32, i32, i32),
+    messages: [&str; 4],
+    color: &str,
+    glowing: bool,
+) -> BlockEntity {
+    let mut board = NbtMap::new();
+    board.insert(
+        "messages".into(),
+        NbtMapValue::List(messages.map(|line| NbtMapValue::String(line.into())).into()),
+    );
+    board.insert("color".into(), NbtMapValue::String(color.into()));
+    board.insert(
+        "has_glowing_text".into(),
+        NbtMapValue::Byte(i8::from(glowing)),
+    );
+    let mut nbt = NbtMap::new();
+    nbt.insert("id".into(), NbtMapValue::String("minecraft:sign".into()));
+    nbt.insert("front_text".into(), NbtMapValue::Compound(board));
+    let mut entity = BlockEntity::new("minecraft:sign".into(), position);
+    entity.set_nbt(nbt);
+    entity
+}
+
+/// Board text lives in a block entity, so a written sign must replace the plain
+/// block-state input in both conversion paths and composite a text tile into the
+/// shared atlas.
+#[test]
+fn sign_text_reaches_both_conversion_paths_and_the_shared_atlas() {
+    const WRITTEN: (i32, i32, i32) = (2, 3, 4);
+    const HANGING: (i32, i32, i32) = (3, 3, 4);
+    const BLANK: (i32, i32, i32) = (5, 3, 4);
+    let mut world = UniversalSchematic::new("signs".into());
+    for (x, y, z) in [WRITTEN, BLANK] {
+        world.set_block(x, y, z, &BlockState::new("minecraft:oak_sign"));
+    }
+    world.set_block(
+        HANGING.0,
+        HANGING.1,
+        HANGING.2,
+        &BlockState::new("minecraft:oak_hanging_sign"),
+    );
+    for (position, message) in [(WRITTEN, "hi"), (HANGING, "hang")] {
+        let message = format!("{{\"text\":\"{message}\"}}");
+        world.set_block_entity(
+            nucleation::block_position::BlockPosition::new(position.0, position.1, position.2),
+            sign_entity(position, [message.as_str(), "", "", ""], "light_blue", true),
+        );
+    }
+
+    let pack = test_pack();
+    let config = crate::mesh_config();
+    // A light-blue dye draws in aqua glyphs, absent from every other fixture texture.
+    let dye = [85, 255, 255, 255];
+    let assert_signs = |source: &CompactBlocks| {
+        let written = input_at(source, WRITTEN);
+        assert_eq!(
+            written.properties.get("text1").map(String::as_str),
+            Some("{\"text\":\"hi\"}")
+        );
+        assert_eq!(
+            written.properties.get("color").map(String::as_str),
+            Some("aqua")
+        );
+        assert_eq!(
+            written.properties.get("glowing").map(String::as_str),
+            Some("true")
+        );
+        assert!(
+            !input_at(source, BLANK).properties.contains_key("text1"),
+            "a sign without a block entity keeps the plain input"
+        );
+        assert_eq!(source.block_count(), 3, "a written sign counts once");
+
+        let atlas = source
+            .atlas(&pack, &mesher_config(&config))
+            .expect("shared atlas");
+        assert!(
+            atlas.regions.keys().any(|path| path.starts_with("_sign/")),
+            "the written board composites its own tile"
+        );
+        assert!(
+            atlas
+                .regions
+                .keys()
+                .any(|path| path.starts_with("_hanging_sign/")),
+            "the hanging board composites its own tile"
+        );
+        assert!(
+            atlas.pixels.chunks_exact(4).any(|pixel| pixel == dye),
+            "the composited board carries the dye-colored glyphs"
+        );
+    };
+
+    let dense =
+        CompactBlocks::from_schematic(world.clone(), None, None, false, &|| Ok(())).unwrap();
+    assert_signs(&dense);
+
+    let bytes = nucleation::formats::litematic::to_litematic(&world).unwrap();
+    assert_signs(&decoded_source(&bytes));
+}

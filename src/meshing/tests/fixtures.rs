@@ -71,7 +71,13 @@ pub(crate) fn test_pack() -> ResourcePackSource {
             pack.add_texture("minecraft", &texture, TextureData::new(16, 16, pixels));
         }
     }
-    for name in ["torch", "end_rod", "player_head"] {
+    for name in [
+        "torch",
+        "end_rod",
+        "player_head",
+        "oak_sign",
+        "oak_hanging_sign",
+    ] {
         pack.add_model("minecraft", &format!("block/{name}"), BlockModel::default());
         pack.add_blockstate(
             "minecraft",
@@ -108,6 +114,23 @@ pub(crate) fn test_pack() -> ResourcePackSource {
             TextureData::new(16, 16, [180, 200, 255, 255].repeat(16 * 16)),
         );
     }
+    // One opaque pixel in every glyph cell, so composited text lands on an
+    // exactly known pixel instead of an antialiased edge.
+    let mut font = vec![0; 128 * 128 * 4];
+    for cell in 0..16 * 16 {
+        let x = (cell % 16) * 8 + 3;
+        let y = (cell / 16) * 8 + 3;
+        let offset = (y * 128 + x) * 4;
+        font[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+    }
+    for path in ["entity/signs/oak", "entity/signs/hanging/oak"] {
+        pack.add_texture(
+            "minecraft",
+            path,
+            TextureData::new(64, 32, [140, 90, 40, 255].repeat(64 * 32)),
+        );
+    }
+    pack.add_texture("minecraft", "font/ascii", TextureData::new(128, 128, font));
     ResourcePackSource::from_resource_pack(pack)
 }
 
