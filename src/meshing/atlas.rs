@@ -273,6 +273,22 @@ mod tests {
     }
 
     #[test]
+    fn a_tile_wider_than_the_area_sized_atlas_keeps_a_valid_region() {
+        // The padded area alone would pick a 256-pixel atlas for one 256-wide
+        // tile, leaving its right edge outside the texture.
+        let pixels: Vec<u8> = (0..256 * 128 * 4)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let tile = TextureData::new(256, 128, pixels);
+        let atlas = pack_tiles(vec![("_board".into(), tile)], 2048, 1).unwrap();
+        assert!(atlas.width > 256, "atlas {}x{}", atlas.width, atlas.height);
+        let region = atlas.get_region("_board").unwrap();
+        assert!(region.u_max <= 1.0 && region.v_max <= 1.0);
+        let extracted = extract_tile(&atlas, region).unwrap();
+        assert_eq!((extracted.width, extracted.height), (256, 128));
+    }
+
+    #[test]
     fn shared_player_skin_survives_shared_atlas_and_chunk_builds() {
         let mut pack = ResourcePack::new();
         let pixels: Vec<u8> = (0..64 * 64 * 4).map(|index| (index % 251) as u8).collect();
