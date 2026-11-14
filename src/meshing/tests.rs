@@ -70,7 +70,7 @@ fn with_meshes<R>(
 fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> Vec<((i32, i32, i32), String)> {
     let chunk = &source.chunks[source
         .chunks
-        .binary_search_by_key(&coord, |(coord, _)| *coord)
+        .binary_search_by_key(&coord, |(coord, _, _)| *coord)
         .unwrap()]
     .1;
     chunk
@@ -348,26 +348,47 @@ fn packed_chunks_round_trip_block_boundaries_at_every_chunk_size() {
             blocks.retain(|&(bx, by, bz, _)| (bx, by, bz) != (x, y, z));
             blocks.push((x, y, z, name));
         }
-        // Entities land on the block grid too, and must reach the chunk that
-        // owns their floored position.
+        // Entities keep their exact position; they reach the chunk that owns
+        // their floored cell and stay out of its blocks.
         schematic.add_entity(Entity::new(
             "minecraft:armor_stand".into(),
             (-size as f64, 0.5, size as f64),
         ));
-        let mut expected = blocks.clone();
-        expected.push((-size, 0, size, "entity:armor_stand"));
+        let entity_cell = (-size, 0, size);
         let source =
             CompactBlocks::from_schematic(schematic, Some(size), None, false, &|| Ok(())).unwrap();
-        let grouped = grouped_by_chunk(&expected, size);
-        assert_eq!(source.chunk_count(), grouped.len());
-        for (coord, entries) in grouped {
-            let mut actual = occupied(&source, coord);
+        let grouped = grouped_by_chunk(&blocks, size);
+        let entity_coord = chunk_coord(BlockPosition::new(-size, 0, size), size);
+        let mut expected_chunks: Vec<_> = grouped.iter().map(|(coord, _)| *coord).collect();
+        if !expected_chunks.contains(&entity_coord) {
+            expected_chunks.push(entity_coord);
+        }
+        expected_chunks.sort_unstable();
+        assert_eq!(source.chunk_count(), expected_chunks.len(), "size {size}");
+        for (coord, entries) in &grouped {
+            let mut actual = occupied(&source, *coord);
             actual.sort();
             assert_eq!(
-                actual, entries,
+                actual, *entries,
                 "chunk {coord:?} at size {size} must hold exactly its own blocks"
             );
         }
+        let instance = source
+            .chunks
+            .iter()
+            .find(|(coord, _, _)| *coord == entity_coord)
+            .and_then(|(_, _, instances)| instances.first())
+            .expect("the entity keeps its own chunk");
+        assert_eq!(
+            (instance.cell.x, instance.cell.y, instance.cell.z),
+            entity_cell,
+            "size {size}"
+        );
+        assert_eq!(instance.offset, [-0.5, 0.5, -0.5], "size {size}");
+        assert_eq!(
+            source.palette[instance.index as usize].name, "entity:armor_stand",
+            "size {size}"
+        );
         // Occupied bounds describe the blocks alone: the entity stands at the
         // opposite corner and must not stretch them.
         let extent = |lowest: bool| -> [i32; 3] {
@@ -430,9 +451,8 @@ fn identical_entities_share_a_palette_entry_and_leave_block_bounds_alone() {
     let mut placed: Vec<_> = source
         .chunks
         .iter()
-        .flat_map(|(coord, _)| occupied(&source, *coord))
-        .filter(|(_, name)| name == "entity:armor_stand")
-        .map(|(position, _)| position)
+        .flat_map(|(_, _, instances)| instances)
+        .map(|instance| (instance.cell.x, instance.cell.y, instance.cell.z))
         .collect();
     placed.sort_unstable();
     assert_eq!(placed, [(-1_000, 0, 0), (1_000, 0, 0)]);
@@ -521,7 +541,7 @@ fn occupied_bounds_saturate_across_the_whole_coordinate_range() {
         let mut positions: Vec<_> = source
             .chunks
             .iter()
-            .flat_map(|(coord, _)| occupied(&source, *coord).into_iter().map(|(pos, _)| pos))
+            .flat_map(|(coord, _, _)| occupied(&source, *coord).into_iter().map(|(pos, _)| pos))
             .collect();
         positions.sort_unstable();
         assert_eq!(
@@ -556,7 +576,7 @@ fn halo_handles_negative_division_and_extreme_coordinate_boundaries() {
         let source =
             CompactBlocks::from_schematic(schematic.clone(), Some(size), None, false, &|| Ok(()))
                 .unwrap();
-        for &(coord, _) in &source.chunks {
+        for &(coord, _, _) in &source.chunks {
             let (min, max) = chunk_bounds(coord, size);
             let mut expected: Vec<_> = positions
                 .iter()
@@ -601,10 +621,10 @@ fn halo_handles_negative_division_and_extreme_coordinate_boundaries() {
 fn armor_stand_pose_and_equipment_survive_native_meshing() {
     let pack = test_pack();
     let mut plain = schematic(&[(-1, 0, 0, "minecraft:stone")]);
-    plain.add_entity(Entity::new("minecraft:armor_stand".into(), (0.0, 0.0, 0.0)));
+    plain.add_entity(Entity::new("minecraft:armor_stand".into(), (0.5, 0.0, 0.5)));
     let mut posed = plain.clone();
     let mut entity = Entity::armor_stand(
-        (0.0, 0.0, 0.0),
+        (0.5, 0.0, 0.5),
         90.0,
         nucleation::ArmorStandEquipment::full_set("diamond"),
     );
@@ -742,6 +762,7 @@ fn generated_texture_cannot_repack_an_already_shared_atlas() {
         &[builder::wet(&palette[0])],
         &[(position, 0)],
         &[(position, &palette[0])],
+        &[],
         BoundingBox::new([0.0; 3], [1.0; 3]),
     );
     assert!(
@@ -826,7 +847,7 @@ fn parallel_dense_conversion_preserves_coordinates_and_palette_order_across_wind
         source
             .chunks
             .iter()
-            .map(|(coord, _)| {
+            .map(|(coord, _, _)| {
                 let mut entries = occupied(source, *coord);
                 entries.sort();
                 (*coord, entries)
@@ -1245,7 +1266,7 @@ fn legacy_player_head_entity(position: (i32, i32, i32), uuid: &str) -> BlockEnti
 }
 
 fn input_at(source: &CompactBlocks, position: (i32, i32, i32)) -> &InputBlock {
-    for (coord, blocks) in &source.chunks {
+    for (coord, blocks, _) in &source.chunks {
         let origin = source.origin_of(*coord);
         if let Some((_, index)) = blocks
             .records(origin)

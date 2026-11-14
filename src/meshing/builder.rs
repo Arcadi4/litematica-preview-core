@@ -9,6 +9,8 @@ use schematic_mesher::{
     TextureAtlas,
 };
 
+use super::EntityInstance;
+
 /// Greedy materials have no alpha-test layer. States that can emit a binary-alpha
 /// face remain in the atlas builder, while their opaque faces stay identical.
 /// Missing textures use the atlas sentinel rather than an empty greedy texture.
@@ -88,6 +90,7 @@ pub(super) fn mesh(
     wet: &[Wet],
     blocks: &[(BlockPosition, u32)],
     context: &[(BlockPosition, &InputBlock)],
+    entities: &[EntityInstance],
     bounds: BoundingBox,
 ) -> Result<MeshOutput, String> {
     // All halo entries participate in neighbor queries; only `blocks` are emitted.
@@ -202,6 +205,30 @@ pub(super) fn mesh(
             });
         }
     }
+    if !entities.is_empty() {
+        // The mesher builds every model around a block center; a schematic
+        // keeps each entity's exact position. Build each instance alone and
+        // move it, so entities sharing one block cell stay separate.
+        let mut supplied = std::mem::replace(&mut output.atlas, TextureAtlas::empty());
+        for entity in entities {
+            let mut builder = MeshBuilder::new(pack, &atlas_config, None, None, None);
+            builder
+                .add_block(entity.cell, &palette[entity.index as usize])
+                .map_err(|error| error.to_string())?;
+            let (mut opaque, mut cutout, mut transparent, atlas, _, _) = builder
+                .build(Some(supplied))
+                .map_err(|error| error.to_string())?;
+            validate_atlas(shared_atlas, &atlas)?;
+            supplied = atlas;
+            for layer in [&mut opaque, &mut cutout, &mut transparent] {
+                translate_layer(layer, entity.offset);
+            }
+            append_layer(&mut output.opaque, opaque)?;
+            append_layer(&mut output.cutout, cutout)?;
+            append_layer(&mut output.transparent, transparent)?;
+        }
+        output.atlas = supplied;
+    }
     if let Some(font) = shared_atlas.get_region(super::sign_board::FONT_TILE) {
         for (position, state) in boards {
             super::sign_board::emit(pack, font, &palette[state], position, &mut output.cutout);
@@ -280,6 +307,16 @@ fn atlas_metadata(shared: &TextureAtlas) -> TextureAtlas {
         height: shared.height,
         pixels: Vec::new(),
         regions: shared.regions.clone(),
+    }
+}
+
+/// Move a layer from its block-centered build position to an exact entity
+/// position.
+fn translate_layer(layer: &mut MeshLayer, offset: [f32; 3]) {
+    for position in &mut layer.positions {
+        position[0] += offset[0];
+        position[1] += offset[1];
+        position[2] += offset[2];
     }
 }
 

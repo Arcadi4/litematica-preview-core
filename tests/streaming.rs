@@ -289,7 +289,7 @@ fn overlap_root(order: &[&str]) -> NbtCompound {
                 if name == "A" {
                     region.insert(
                         "Entities",
-                        NbtList::from(vec![NbtTag::Compound(entity([0.0, 0.0, 0.0]))]),
+                        NbtList::from(vec![NbtTag::Compound(entity([0.5, 0.0, 0.5]))]),
                     );
                 }
                 (name, region)
@@ -367,8 +367,8 @@ fn signed_extents_preserve_entities_at_block_positions_and_deduplicate_tiles_per
     negative.insert(
         "Entities",
         NbtList::from(vec![
-            NbtTag::Compound(entity([0.0, 0.0, 0.0])),
-            NbtTag::Compound(entity([4.0, 0.0, 0.0])),
+            NbtTag::Compound(entity([0.5, 0.0, 0.5])),
+            NbtTag::Compound(entity([4.5, 0.0, 0.5])),
         ]),
     );
     let tiles = [[0, 0, 0], [0, 0, 0], [2, 1, 1]]
@@ -392,7 +392,7 @@ fn signed_extents_preserve_entities_at_block_positions_and_deduplicate_tiles_per
         (10, 19, 30, "minecraft:cave_air"),
         (8, 20, 29, "minecraft:void_air"),
     ]);
-    for position in [(10.0, 20.0, 30.0), (14.0, 20.0, 30.0)] {
+    for position in [(10.5, 20.0, 30.5), (14.5, 20.0, 30.5)] {
         reference.add_entity(nucleation::Entity::new(
             "minecraft:armor_stand".into(),
             position,

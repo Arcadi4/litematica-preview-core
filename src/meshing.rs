@@ -74,6 +74,29 @@ fn block_index(packed: IndexedBlock) -> u32 {
     (packed & INDEX_MASK) as u32
 }
 
+/// Order entity instances the way blocks are ordered, then resolve their
+/// source aliases to global palette entries.
+fn sort_entities(instances: &mut [EntityInstance], order: Option<&[(usize, u32)]>) {
+    match order {
+        Some(order) => instances.sort_by_key(|instance| {
+            (
+                instance.cell.y,
+                instance.cell.z,
+                instance.cell.x,
+                order[instance.index as usize].0,
+            )
+        }),
+        None => {
+            instances.sort_by_key(|instance| (instance.cell.y, instance.cell.z, instance.cell.x))
+        }
+    }
+    if let Some(order) = order {
+        for instance in instances {
+            instance.index = order[instance.index as usize].1;
+        }
+    }
+}
+
 fn chunk_origin(coord: ChunkCoord, size: i32) -> [i32; 3] {
     let size = i64::from(size);
     [coord.0, coord.1, coord.2].map(|value| {
@@ -82,6 +105,18 @@ fn chunk_origin(coord: ChunkCoord, size: i32) -> [i32; 3] {
         // every stored block even when the product leaves `i32`.
         (i64::from(value) * size).max(i64::from(i32::MIN)) as i32
     })
+}
+
+/// One entity of a mesh chunk. Entities keep their exact world position:
+/// `cell` is the block the mesher builds the model around, and `offset` moves
+/// that model from the block center to the position the entity occupies.
+/// Several entities may share one cell, so they live outside the packed block
+/// records and every instance is meshed.
+#[derive(Clone, Copy)]
+pub(crate) struct EntityInstance {
+    pub(crate) cell: BlockPosition,
+    pub(crate) offset: [f32; 3],
+    pub(crate) index: u32,
 }
 
 /// The occupied blocks of one mesh chunk, in the y-z-x order the mesher reads.
@@ -251,7 +286,7 @@ impl ChunkBlocks {
 }
 
 pub(crate) struct CompactBlocks {
-    chunks: Vec<(ChunkCoord, ChunkBlocks)>,
+    chunks: Vec<(ChunkCoord, ChunkBlocks, Vec<EntityInstance>)>,
     palette: Vec<InputBlock>,
     chunk_size: Option<i32>,
     block_count: i64,
@@ -268,6 +303,7 @@ pub(crate) struct PaletteEntry {
 
 pub(crate) struct CompactBlocksBuilder {
     chunks: HashMap<ChunkCoord, ChunkBlocks>,
+    entities: HashMap<ChunkCoord, Vec<EntityInstance>>,
     palette: Vec<InputBlock>,
     states: HashMap<BlockState, u32>,
     inputs: HashMap<String, u32>,
@@ -293,6 +329,7 @@ impl CompactBlocksBuilder {
         }
         Ok(Self {
             chunks: HashMap::new(),
+            entities: HashMap::new(),
             palette: Vec::new(),
             states: HashMap::new(),
             inputs: HashMap::new(),
@@ -385,19 +422,60 @@ impl CompactBlocksBuilder {
     }
 
     pub(crate) fn push_entity(&mut self, entity: &Entity) -> Result<(), String> {
-        let position = BlockPosition::new(
-            entity.position.0.floor() as i32,
-            entity.position.1.floor() as i32,
-            entity.position.2.floor() as i32,
-        );
+        let (x, y, z) = entity.position;
+        // Finite positions outside `i32` saturate to a cell without a usable
+        // remainder, matching the clamp a block position would take.
+        let split = |value: f64| {
+            let floor = value.floor();
+            let cell = floor as i32;
+            let remainder = if f64::from(cell) == floor {
+                value - floor
+            } else {
+                0.0
+            };
+            (cell, remainder)
+        };
+        let (cell_x, remainder_x) = split(x);
+        let (cell_y, remainder_y) = split(y);
+        let (cell_z, remainder_z) = split(z);
+        let cell = BlockPosition::new(cell_x, cell_y, cell_z);
+        // The mesher draws a model around the center of its block, with a mob's
+        // feet on that block's lower face. A schematic entity NBT `Pos` is its
+        // exact feet position, so carry the remainder from the block to place
+        // each instance where it stood; stacking entities in one cell must not
+        // collapse them onto the same model.
+        let offset = [
+            (remainder_x - 0.5) as f32,
+            remainder_y as f32,
+            (remainder_z - 0.5) as f32,
+        ];
         // Identical entities share one palette entry: a build packed with the
         // same mob would otherwise hold a property map per entity. Each push
-        // still gets its own source alias, so source ordering is unchanged.
+        // still gets its own instance and source alias, so source ordering is
+        // unchanged.
         let index = self.input_index(entity_to_input_block(entity))?;
         let index = self.source_index(index)?;
-        // Entities render at block positions but never widen the occupied
-        // block box, so a mob standing beside a build cannot change its fit.
-        self.push_index(position, index, false)
+        let coord = self
+            .chunk_size
+            .map_or((0, 0, 0), |size| chunk_coord(cell, size));
+        // An entity-only chunk still needs a slot so its model survives the
+        // chunk walk; it has no block records of its own.
+        self.chunks
+            .entry(coord)
+            .or_insert_with(|| match self.chunk_size {
+                Some(_) => ChunkBlocks::Packed(Vec::new()),
+                None => ChunkBlocks::Absolute(Vec::new()),
+            });
+        let instances = self.entities.entry(coord).or_default();
+        instances
+            .try_reserve(1)
+            .map_err(|error| error.to_string())?;
+        instances.push(EntityInstance {
+            cell,
+            offset,
+            index,
+        });
+        Ok(())
     }
 
     /// Push a block whose input carries per-instance properties, such as a
@@ -511,20 +589,40 @@ impl CompactBlocksBuilder {
     }
 
     pub(crate) fn finish(self) -> CompactBlocks {
-        let mut chunks: Vec<_> = self.chunks.into_iter().collect();
-        chunks.sort_unstable_by_key(|(coord, _)| *coord);
-        for (_, blocks) in &mut chunks {
-            blocks.sort(self.source_order.as_deref());
+        let Self {
+            mut chunks,
+            mut entities,
+            palette,
+            chunk_size,
+            block_count,
+            block_entity_count,
+            source_order,
+            tight_min,
+            tight_max,
+            has_blocks,
+            ..
+        } = self;
+        let mut chunks: Vec<_> = chunks
+            .drain()
+            .map(|(coord, blocks)| {
+                let mut instances = entities.remove(&coord).unwrap_or_default();
+                sort_entities(&mut instances, source_order.as_deref());
+                (coord, blocks, instances)
+            })
+            .collect();
+        chunks.sort_unstable_by_key(|(coord, _, _)| *coord);
+        for (_, blocks, _) in &mut chunks {
+            blocks.sort(source_order.as_deref());
         }
         CompactBlocks {
             chunks,
-            palette: self.palette,
-            chunk_size: self.chunk_size,
-            block_count: self.block_count,
-            block_entity_count: self.block_entity_count,
-            tight_min: self.tight_min,
-            tight_max: self.tight_max,
-            has_blocks: self.has_blocks,
+            palette,
+            chunk_size,
+            block_count,
+            block_entity_count,
+            tight_min,
+            tight_max,
+            has_blocks,
         }
     }
 }
@@ -713,9 +811,9 @@ impl CompactBlocks {
     }
 
     /// Lower corner of the occupied-block box, for framing a preview before
-    /// any geometry exists. Entities render at block positions but never widen
-    /// it, so a mob standing beside a build cannot change its fit. Zero when
-    /// the schematic has no blocks.
+    /// any geometry exists. Entity geometry never widens it, so a mob standing
+    /// beside a build cannot change its fit. Zero when the schematic has no
+    /// blocks.
     pub(crate) fn content_origin(&self) -> (i32, i32, i32) {
         if self.has_blocks {
             (self.tight_min[0], self.tight_min[1], self.tight_min[2])
@@ -766,7 +864,7 @@ impl CompactBlocks {
         } else {
             &[]
         };
-        let actual_positions = chunks.iter().flat_map(|(coord, blocks)| {
+        let block_positions = chunks.iter().flat_map(|(coord, blocks, _)| {
             let positioned = &positioned;
             let origin = self.origin_of(*coord);
             blocks.records(origin).filter_map(move |(pos, index)| {
@@ -774,8 +872,21 @@ impl CompactBlocks {
                 positioned[index].then_some((pos, &self.palette[index]))
             })
         });
-        atlas::build(pack.pack(), config, representatives.chain(actual_positions))
-            .map_err(|error| format!("Unable to prepare schematic textures: {error}"))
+        let entity_positions = chunks.iter().flat_map(|(_, _, instances)| {
+            let positioned = &positioned;
+            instances.iter().filter_map(move |instance| {
+                let index = instance.index as usize;
+                positioned[index].then_some((instance.cell, &self.palette[index]))
+            })
+        });
+        atlas::build(
+            pack.pack(),
+            config,
+            representatives
+                .chain(block_positions)
+                .chain(entity_positions),
+        )
+        .map_err(|error| format!("Unable to prepare schematic textures: {error}"))
     }
 
     /// Visit the blocks that neighbor one chunk: the chunk itself plus the
@@ -800,11 +911,11 @@ impl CompactBlocks {
                     };
                     let Ok(index) = self
                         .chunks
-                        .binary_search_by_key(&(x, y, z), |(coord, _)| *coord)
+                        .binary_search_by_key(&(x, y, z), |(coord, _, _)| *coord)
                     else {
                         continue;
                     };
-                    let (coord, blocks) = &self.chunks[index];
+                    let (coord, blocks, _) = &self.chunks[index];
                     let origin = self.origin_of(*coord);
                     for (pos, state) in blocks.y_band(origin, min[1] - 1, max[1] + 1) {
                         if i64::from(pos.x) >= min[0] - 1
@@ -823,7 +934,7 @@ impl CompactBlocks {
     /// The complete halo one chunk is meshed against.
     fn context(&self, coord: ChunkCoord) -> Vec<(BlockPosition, &InputBlock)> {
         let Some(size) = self.chunk_size else {
-            let Some((_, blocks)) = self.chunks.first() else {
+            let Some((_, blocks, _)) = self.chunks.first() else {
                 return Vec::new();
             };
             return blocks
@@ -924,7 +1035,7 @@ impl<'a> ChunkMeshes<'a> {
     }
 
     pub(super) fn mesh_at(&self, index: usize) -> Result<MeshOutput, String> {
-        let (coord, chunk) = &self.source.chunks[index];
+        let (coord, chunk, entities) = &self.source.chunks[index];
         let origin = self.source.origin_of(*coord);
         let bounds = if let Some(size) = self.source.chunk_size {
             let (min, max) = chunk_bounds(*coord, size);
@@ -933,7 +1044,11 @@ impl<'a> ChunkMeshes<'a> {
             BoundingBox::from_points(
                 chunk
                     .records(origin)
-                    .map(|(pos, _)| [pos.x as f32, pos.y as f32, pos.z as f32]),
+                    .map(|(pos, _)| [pos.x as f32, pos.y as f32, pos.z as f32])
+                    .chain(entities.iter().map(|instance| {
+                        let cell = instance.cell;
+                        [cell.x as f32, cell.y as f32, cell.z as f32]
+                    })),
             )
             .expect("Only occupied groups are retained")
         };
@@ -950,6 +1065,7 @@ impl<'a> ChunkMeshes<'a> {
             &self.wet,
             &blocks,
             &context,
+            entities,
             bounds,
         )?;
         mesh.chunk_coord = self.source.chunk_size.map(|_| *coord);
@@ -1008,7 +1124,7 @@ impl<'a> ChunkMeshes<'a> {
             .source
             .chunks
             .iter()
-            .map(|(_, blocks)| blocks.len())
+            .map(|(_, blocks, _)| blocks.len())
             .max()
             .unwrap_or(0);
         // Budget the largest core, its 27 neighbors, and Vec growth; an oversize

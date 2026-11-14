@@ -40,6 +40,11 @@ There is no Node.js tooling; every task is a cargo command.
 - Include greedy parts in triangle counts and bounds. `schematic_mesher 0.2.1`'s
   `total_triangles()` and `is_empty()` omit them.
 - Frame geometry bounds rather than chunk-padded schematic dimensions.
+- Entity instances keep their exact NBT `Pos`; `EntityInstance` stores the
+  floored cell plus the remainder that places the model. Never pack an entity
+  into the block records: one record per cell would stack every entity sharing
+  a block and lose their spacing. Each instance is built alone from its cell and
+  translated, so entity counts and off-grid positions both survive.
 - `MeshStream` guarantees compact 24-byte vertices. `load_chunks` uses the same
   packer but preserves positions as float3 in 28-byte vertices when actual
   geometry spans more than 256 blocks along any axis. Consumers use
