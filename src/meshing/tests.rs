@@ -1444,7 +1444,7 @@ fn sign_text_draws_glyphs_from_the_shared_font_tile() {
         let mut fills = 0;
         let mut glow = 0;
         let mut chunks_seen = 0;
-        let shade = [dye[0] * 0.25, dye[1] * 0.25, dye[2] * 0.25];
+        let shade = [dye[0] * 0.4, dye[1] * 0.4, dye[2] * 0.4];
         let near = |color: [f32; 4], expected: [f32; 3]| {
             (0..3).all(|axis| (color[axis] - expected[axis]).abs() < 1e-6)
         };
@@ -1653,4 +1653,74 @@ fn overlong_board_text_stops_at_the_board_edge() {
             "the clipped line spans the board instead of ending at {start}..{end}"
         );
     });
+}
+
+/// Vanilla draws plain board text at 40% of the dye, and a glowing board fills
+/// with the dye over an outline of that shade, or warm white for black glyphs.
+#[test]
+fn board_text_uses_vanilla_ink_and_outline_colors() {
+    const GLOWING: (i32, i32, i32) = (2, 3, 4);
+    const PLAIN: (i32, i32, i32) = (5, 3, 4);
+    let mut world = UniversalSchematic::new("ink".into());
+    for (position, dye, glowing) in [(GLOWING, "black", true), (PLAIN, "light_blue", false)] {
+        world.set_block(
+            position.0,
+            position.1,
+            position.2,
+            &BlockState::new("minecraft:oak_sign"),
+        );
+        world.set_block_entity(
+            nucleation::block_position::BlockPosition::new(position.0, position.1, position.2),
+            sign_entity(position, ["{\"text\":\"hi\"}", "", "", ""], dye, glowing),
+        );
+    }
+
+    let pack = test_pack();
+    let config = crate::mesh_config();
+    let aqua = [85.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0];
+    let warm = [240.0 / 255.0, 235.0 / 255.0, 204.0 / 255.0];
+    let shade = |color: [f32; 3]| color.map(|channel| channel * 0.4);
+    let near = |color: [f32; 4], expected: [f32; 3]| {
+        (0..3).all(|axis| (color[axis] - expected[axis]).abs() < 1e-6)
+    };
+    let (mut glow_fills, mut glow_outlines, mut plain_inks) = (0, 0, 0);
+    with_meshes(world, &pack, &config, None, |chunks| {
+        for chunk in chunks {
+            let mesh = chunk.unwrap();
+            let Some(font) = mesh.atlas.get_region(super::sign_board::FONT_TILE) else {
+                continue;
+            };
+            for (layer, _, _) in parts(&mesh) {
+                for indices in layer.indices.chunks_exact(3) {
+                    let inside = indices.iter().all(|&index| {
+                        let uv = layer.uvs[index as usize];
+                        uv[0] >= font.u_min - 1e-6
+                            && uv[0] <= font.u_max + 1e-6
+                            && uv[1] >= font.v_min - 1e-6
+                            && uv[1] <= font.v_max + 1e-6
+                    });
+                    if !inside {
+                        continue;
+                    }
+                    let color = layer.colors[indices[0] as usize];
+                    let glowing = layer.positions[indices[0] as usize][0] < 3.5;
+                    if glowing {
+                        if near(color, [0.0; 3]) {
+                            glow_fills += 1;
+                        } else if near(color, warm) {
+                            glow_outlines += 1;
+                        } else {
+                            panic!("glowing black glyph drew {color:?}");
+                        }
+                    } else {
+                        assert!(near(color, shade(aqua)), "plain glyph drew {color:?}");
+                        plain_inks += 1;
+                    }
+                }
+            }
+        }
+    });
+    assert!(glow_fills > 0, "black glyphs keep their dye fill");
+    assert!(glow_outlines > 0, "their outline is warm white");
+    assert!(plain_inks > 0, "plain glyphs draw at the dye's shade");
 }

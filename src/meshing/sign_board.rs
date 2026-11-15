@@ -9,6 +9,10 @@
 //! glyph frame therefore follows the mesher's sign model without repeating it.
 //! A line wider than the board starts at the board's leading edge and stops at
 //! its trailing edge, as the mesher's own board composite does.
+//!
+//! Colors follow vanilla: plain glyphs draw at [`TEXT_SHADE`] of the dye, and a
+//! glowing board fills with the dye over an outline of that shade, or
+//! [`BLACK_OUTLINE`] when the dye is black.
 
 use schematic_mesher::atlas::AtlasRegion;
 use schematic_mesher::mesher::entity::{generate_entity_geometry, BlockEntityType, SignWood};
@@ -37,8 +41,8 @@ const FACE_OFFSET: f32 = 0.01;
 /// the scan cannot measure it.
 const BLANK_ADVANCE: f32 = 4.0;
 
-/// Glow text draws a darkened copy of each glyph under the fill, in these font
-/// pixel offsets. The mesher composites the same offsets when it draws text.
+/// Glow text draws an outlined copy of each glyph under the fill, in these font
+/// pixel offsets.
 const GLOW_OFFSETS: [(f32, f32); 8] = [
     (-1.0, 0.0),
     (1.0, 0.0),
@@ -50,8 +54,13 @@ const GLOW_OFFSETS: [(f32, f32); 8] = [
     (1.0, 1.0),
 ];
 
-/// Brightness of the glow copy, as the mesher sets it.
-const GLOW_SHADE: f32 = 0.25;
+/// Brightness of plain board text and of a glowing board's outline, as vanilla
+/// shades both.
+const TEXT_SHADE: f32 = 0.4;
+
+/// Vanilla outlines glowing black text in this warm white, because a black
+/// outline on black glyphs would be invisible.
+const BLACK_OUTLINE: [f32; 3] = [240.0 / 255.0, 235.0 / 255.0, 204.0 / 255.0];
 
 /// Glow copy depth, as a fraction of [`FACE_OFFSET`]. The fill must win at
 /// coincident pixels.
@@ -419,6 +428,14 @@ impl Glyphs<'_> {
         let centering = (LINES - self.lines.len()) as f32 * line_height / 2.0;
         let glow = self.glow;
         for (index, line) in self.lines.iter().enumerate() {
+            let ink = if glow { line.color } else { shade(line.color) };
+            let outline = glow.then(|| {
+                if line.color == [0.0; 3] {
+                    BLACK_OUTLINE
+                } else {
+                    shade(line.color)
+                }
+            });
             let advance: f32 = line
                 .text
                 .bytes()
@@ -432,12 +449,7 @@ impl Glyphs<'_> {
                     break;
                 }
                 if let Some(cell) = self.metrics.cell(byte) {
-                    if glow {
-                        let shade = [
-                            line.color[0] * GLOW_SHADE,
-                            line.color[1] * GLOW_SHADE,
-                            line.color[2] * GLOW_SHADE,
-                        ];
+                    if let Some(outline) = outline {
                         for (dx, dy) in GLOW_OFFSETS {
                             self.quad(
                                 frame,
@@ -448,7 +460,7 @@ impl Glyphs<'_> {
                                     width: step / width,
                                     height: glyph_height / height,
                                     cell,
-                                    color: shade,
+                                    color: outline,
                                     outset: FACE_OFFSET * GLOW_DEPTH,
                                 },
                             );
@@ -463,7 +475,7 @@ impl Glyphs<'_> {
                             width: step / width,
                             height: glyph_height / height,
                             cell,
-                            color: line.color,
+                            color: ink,
                             outset: FACE_OFFSET,
                         },
                     );
@@ -531,6 +543,15 @@ struct Quad {
     /// Distance along the face normal, in blocks. The fill sits in front of
     /// the glow copy so coincident depths cannot hide it.
     outset: f32,
+}
+
+/// Vanilla's ink for a dye at its plain brightness.
+fn shade(color: [f32; 3]) -> [f32; 3] {
+    [
+        color[0] * TEXT_SHADE,
+        color[1] * TEXT_SHADE,
+        color[2] * TEXT_SHADE,
+    ]
 }
 
 /// Trim a glyph quad to the board face, shrinking its cell by the same ratio so
