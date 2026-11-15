@@ -445,19 +445,15 @@ impl Glyphs<'_> {
                     shade(line.color)
                 }
             });
-            let advance: f32 = line
-                .text
-                .bytes()
-                .map(|byte| self.metrics.advance(byte))
-                .sum();
+            let advance: f32 = line.text.chars().map(|c| self.metrics.advance(c)).sum();
             let mut cursor = (width - advance).max(0.0) / 2.0;
             let top = index as f32 * line_height;
-            for byte in line.text.bytes() {
-                let step = self.metrics.advance(byte);
+            for character in line.text.chars() {
+                let step = self.metrics.advance(character);
                 if cursor + step > width {
                     break;
                 }
-                if let Some(cell) = self.metrics.cell(byte) {
+                if let Some(cell) = self.metrics.cell(character) {
                     if let Some(outline) = outline {
                         for (dx, dy) in GLOW_OFFSETS {
                             self.quad(
@@ -659,18 +655,20 @@ impl Metrics {
         })
     }
 
-    /// Advance of one character, in font pixels.
-    fn advance(&self, byte: u8) -> f32 {
-        self.advances
-            .get(usize::from(byte))
-            .copied()
-            .unwrap_or(BLANK_ADVANCE)
+    /// Advance of one character, in font pixels. A character the page cannot
+    /// draw advances like a space.
+    fn advance(&self, character: char) -> f32 {
+        u8::try_from(character).map_or(BLANK_ADVANCE, |byte| {
+            self.advances
+                .get(usize::from(byte))
+                .copied()
+                .unwrap_or(BLANK_ADVANCE)
+        })
     }
 
-    /// The glyph cell, in page fractions. The mesher maps a board byte to a
-    /// page cell, so multi-byte text repeats that mapping.
-    fn cell(&self, byte: u8) -> Option<Cell> {
-        let code = u32::from(byte);
+    /// The glyph cell, in page fractions, or `None` past the page's last cell.
+    fn cell(&self, character: char) -> Option<Cell> {
+        let code = u32::from(u8::try_from(character).ok()?);
         let x = (code % 16) * self.cell_w;
         let y = (code / 16) * self.cell_h;
         Some(Cell {
