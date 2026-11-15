@@ -63,6 +63,12 @@ There is no Node.js tooling; every task is a cargo command.
   name mapped to its formatting color. `meshing/sign_board.rs` holds those
   properties back from the mesher, so the mesher draws the plain board. The
   module draws the characters as quads that sample one font tile, and the atlas
-  holds one font page for every board text.
+  holds one font page for every board text. Each line keeps the slot it was
+  typed into. Layout copies vanilla's sign renderers: a 10 pixel line (9 when
+  hanging) at the model's two thirds (nine tenths when hanging) text scale, and
+  a line truncated to 90 pixels (60 when hanging) at a word boundary, then
+  centred. Plain board text draws at 40% of its dye; a glowing board fills with
+  the dye over an outline of that shade, or warm white (`0xFFF0EBCC`) when the
+  dye is black.
 - `panic = "unwind"` is required: hosts recover from a panic in this crate, so a
   malformed schematic must not terminate their process or poison a cached pack.
