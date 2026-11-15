@@ -6,7 +6,24 @@ use schematic_mesher::resource_pack::{
 use schematic_mesher::{types::Direction, ResourcePack};
 use std::collections::HashMap;
 
+/// A 16 by 16 grid page with one opaque pixel in each cell.
+pub(crate) fn font_page(width: u32, height: u32) -> (u32, u32, Vec<u8>) {
+    let (cell_w, cell_h) = ((width / 16).max(1), (height / 16).max(1));
+    let mut pixels = vec![0; (width * height * 4) as usize];
+    for cell in 0..16 * 16 {
+        let x = (cell % 16) * cell_w + cell_w / 2;
+        let y = (cell / 16) * cell_h + cell_h / 2;
+        let offset = ((y.min(height - 1) * width + x.min(width - 1)) * 4) as usize;
+        pixels[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+    }
+    (width, height, pixels)
+}
+
 pub(crate) fn test_pack() -> ResourcePackSource {
+    test_pack_with_font(Some(font_page(128, 128)))
+}
+
+pub(crate) fn test_pack_with_font(font: Option<(u32, u32, Vec<u8>)>) -> ResourcePackSource {
     let mut pack = ResourcePack::new();
     for (name, alpha) in [
         ("stone", 255),
@@ -71,14 +88,22 @@ pub(crate) fn test_pack() -> ResourcePackSource {
             pack.add_texture("minecraft", &texture, TextureData::new(16, 16, pixels));
         }
     }
-    for name in [
-        "torch",
-        "end_rod",
-        "player_head",
-        "oak_sign",
-        "oak_wall_sign",
-        "oak_hanging_sign",
-    ] {
+    let sign_blocks: Vec<String> = [
+        "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "crimson", "warped", "mangrove",
+        "cherry", "bamboo",
+    ]
+    .into_iter()
+    .flat_map(|wood| {
+        ["sign", "wall_sign", "hanging_sign", "wall_hanging_sign"]
+            .map(|kind| format!("{wood}_{kind}"))
+    })
+    .collect();
+    for name in ["torch", "end_rod", "player_head"]
+        .map(str::to_owned)
+        .into_iter()
+        .chain(sign_blocks)
+    {
+        let name = name.as_str();
         pack.add_model("minecraft", &format!("block/{name}"), BlockModel::default());
         pack.add_blockstate(
             "minecraft",
@@ -115,23 +140,28 @@ pub(crate) fn test_pack() -> ResourcePackSource {
             TextureData::new(16, 16, [180, 200, 255, 255].repeat(16 * 16)),
         );
     }
-    // One opaque pixel in every glyph cell, so composited text lands on an
-    // exactly known pixel instead of an antialiased edge.
-    let mut font = vec![0; 128 * 128 * 4];
-    for cell in 0..16 * 16 {
-        let x = (cell % 16) * 8 + 3;
-        let y = (cell / 16) * 8 + 3;
-        let offset = (y * 128 + x) * 4;
-        font[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+    for wood in [
+        "oak", "spruce", "birch", "jungle", "acacia", "dark_oak", "crimson", "warped", "mangrove",
+        "cherry", "bamboo",
+    ] {
+        for path in [
+            format!("entity/signs/{wood}"),
+            format!("entity/signs/hanging/{wood}"),
+        ] {
+            pack.add_texture(
+                "minecraft",
+                &path,
+                TextureData::new(64, 32, [140, 90, 40, 255].repeat(64 * 32)),
+            );
+        }
     }
-    for path in ["entity/signs/oak", "entity/signs/hanging/oak"] {
+    if let Some((width, height, pixels)) = font {
         pack.add_texture(
             "minecraft",
-            path,
-            TextureData::new(64, 32, [140, 90, 40, 255].repeat(64 * 32)),
+            "font/ascii",
+            TextureData::new(width, height, pixels),
         );
     }
-    pack.add_texture("minecraft", "font/ascii", TextureData::new(128, 128, font));
     ResourcePackSource::from_resource_pack(pack)
 }
 

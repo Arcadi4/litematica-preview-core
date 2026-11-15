@@ -4,6 +4,7 @@ use nucleation::block_entity::BlockEntity;
 use nucleation::nbt::{NbtMap, NbtValue as NbtMapValue};
 
 mod fixtures;
+mod signs;
 use fixtures::{schematic, test_pack};
 
 fn area(mesh: &MeshOutput) -> f64 {
