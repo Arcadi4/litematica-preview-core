@@ -7,12 +7,11 @@
 //! The board faces come from the mesher's public entity geometry: the front
 //! face is the largest face whose normal points the way the sign faces. The
 //! glyph frame therefore follows the mesher's sign model without repeating it.
-//! A line wider than the board starts at the board's leading edge and stops at
-//! its trailing edge, as the mesher's own board composite does.
 //!
-//! Colors follow vanilla: plain glyphs draw at [`TEXT_SHADE`] of the dye, and a
-//! glowing board fills with the dye over an outline of that shade, or
-//! [`BLACK_OUTLINE`] when the dye is black.
+//! Layout, scale, ink, and glow follow vanilla's sign renderers: four fixed line
+//! slots sized by the model's text scale, a line truncated to the board's line
+//! width, plain glyphs at [`TEXT_SHADE`] of the dye, and a glowing board filled
+//! with the dye over an outline of that shade or [`BLACK_OUTLINE`].
 
 use schematic_mesher::atlas::AtlasRegion;
 use schematic_mesher::mesher::entity::{generate_entity_geometry, BlockEntityType, SignWood};
@@ -30,9 +29,21 @@ const BOARD_PROPERTIES: [&str; 6] = ["text1", "text2", "text3", "text4", "color"
 /// the gap vanilla leaves.
 const LINES: usize = 4;
 
-/// The composited board image is upscaled by this factor, so a font pixel is a
-/// fourth of a board pixel. Glyph quads use the same ratio to keep text size.
-const BOARD_UPSCALE: f32 = 4.0;
+/// Blocks per font pixel before the renderer's text scale: vanilla's sign text
+/// transform scales by `0.015625 * textScale`.
+const TEXT_UNIT: f32 = 0.015625;
+
+/// Vanilla draws a standing or wall board's text at two thirds of [`TEXT_UNIT`]
+/// and a hanging board's text at nine tenths (`SignRenderer` and
+/// `HangingSignRenderer` text render scales).
+const STANDING_TEXT_SCALE: f32 = 2.0 / 3.0;
+const HANGING_TEXT_SCALE: f32 = 0.9;
+
+/// Vanilla's line height and widest line, in font pixels: `SignBlockEntity`
+/// reports 10 and 90, `HangingSignBlockEntity` 9 and 60. A longer line keeps
+/// only the part that fits, at a word boundary where the text has one.
+const STANDING_LINE: (f32, f32) = (10.0, 90.0);
+const HANGING_LINE: (f32, f32) = (9.0, 60.0);
 
 /// Distance a glyph quad sits in front of the board face, in blocks. Board and
 /// glyph planes would z-fight otherwise, because both are flat.
@@ -112,13 +123,7 @@ pub(super) fn emit(
         return;
     };
     let plain = strip(block).unwrap_or_else(|| block.clone());
-    let (vertices, _, faces) = generate_entity_geometry(&plain, &entity);
-    let Some(texture) = faces
-        .first()
-        .and_then(|face| pack.get_texture(&face.texture))
-    else {
-        return;
-    };
+    let (vertices, _, _) = generate_entity_geometry(&plain, &entity);
     let origin = [
         position.x as f32 - 0.5,
         position.y as f32 - 0.5,
@@ -132,9 +137,10 @@ pub(super) fn emit(
             .properties
             .get("glowing")
             .is_some_and(|value| value == "true"),
+        hanging: matches!(entity, BlockEntityType::HangingSign { .. }),
         cutout,
     };
-    for frame in frames(&vertices, texture, block) {
+    for frame in frames(&vertices, block) {
         glyphs.write(&frame, origin);
     }
 }
@@ -317,27 +323,25 @@ fn rgb(color: [u8; 3]) -> [f32; 3] {
 }
 
 /// One board face: its lower-left texture corner, its width and height vectors,
-/// its normal, and its size in board texels.
+/// and its normal.
 struct Frame {
     origin: [f32; 3],
     right: [f32; 3],
     down: [f32; 3],
     normal: [f32; 3],
-    texels: (f32, f32),
 }
 
 /// Board faces of the mesher's sign geometry, oriented the way the sign faces.
-fn frames(
-    vertices: &[schematic_mesher::Vertex],
-    texture: &TextureData,
-    block: &InputBlock,
-) -> Vec<Frame> {
+fn frames(vertices: &[schematic_mesher::Vertex], block: &InputBlock) -> Vec<Frame> {
     let Some(facing) = facing(&block.properties) else {
         return Vec::new();
     };
     let area = |face: &[schematic_mesher::Vertex; 4]| {
         let (u_min, u_max, v_min, v_max) = uv_bounds(face);
-        (u_max - u_min) * (v_max - v_min) * (texture.width * texture.height) as f32
+        length(cross(
+            sub(corner(face, u_max, v_min), corner(face, u_min, v_min)),
+            sub(corner(face, u_min, v_max), corner(face, u_min, v_min)),
+        ))
     };
     let (quads, _) = vertices.as_chunks::<4>();
     let widest = quads.iter().map(area).fold(0.0, f32::max);
@@ -365,10 +369,6 @@ fn frames(
             right: sub(corner(quad, u_max, v_min), origin),
             down: sub(corner(quad, u_min, v_max), origin),
             normal,
-            texels: (
-                (u_max - u_min) * texture.width as f32,
-                (v_max - v_min) * texture.height as f32,
-            ),
         });
     }
     frames
@@ -423,15 +423,29 @@ struct Glyphs<'a> {
     font: &'a AtlasRegion,
     lines: &'a [Option<Line>],
     glow: bool,
+    hanging: bool,
     cutout: &'a mut MeshLayer,
 }
 
 impl Glyphs<'_> {
     fn write(&mut self, frame: &Frame, block: [f32; 3]) {
-        let width = frame.texels.0 * BOARD_UPSCALE;
-        let height = frame.texels.1 * BOARD_UPSCALE;
-        let line_height = height / LINES as f32;
+        // Vanilla lays a board out in its own font pixels: the plate is sized
+        // by the model's text scale, and the four slots centre on it.
+        let (line_height, line_width) = if self.hanging {
+            HANGING_LINE
+        } else {
+            STANDING_LINE
+        };
+        let text_scale = if self.hanging {
+            HANGING_TEXT_SCALE
+        } else {
+            STANDING_TEXT_SCALE
+        };
+        let blocks_per_pixel = TEXT_UNIT * text_scale;
+        let width = length(frame.right) / blocks_per_pixel;
+        let height = length(frame.down) / blocks_per_pixel;
         let glyph_height = self.metrics.cell_h as f32;
+        let margin = (height - LINES as f32 * line_height) / 2.0;
         let glow = self.glow;
         for (index, line) in self.lines.iter().enumerate() {
             let Some(line) = line else {
@@ -445,10 +459,11 @@ impl Glyphs<'_> {
                     shade(line.color)
                 }
             });
-            let advance: f32 = line.text.chars().map(|c| self.metrics.advance(c)).sum();
+            let visible = truncate(&line.text, line_width, |c| self.metrics.advance(c));
+            let advance: f32 = visible.chars().map(|c| self.metrics.advance(c)).sum();
             let mut cursor = (width - advance).max(0.0) / 2.0;
-            let top = index as f32 * line_height;
-            for character in line.text.chars() {
+            let top = margin + index as f32 * line_height;
+            for character in visible.chars() {
                 let step = self.metrics.advance(character);
                 if cursor + step > width {
                     break;
@@ -548,6 +563,29 @@ struct Quad {
     /// Distance along the face normal, in blocks. The fill sits in front of
     /// the glow copy so coincident depths cannot hide it.
     outset: f32,
+}
+
+/// The leading part of `text` that vanilla keeps on one board line: words stay
+/// whole while they fit `max`, and a word too wide for the board is cut by that
+/// width. Vanilla wraps the line and draws only its first row.
+fn truncate(text: &str, max: f32, advance: impl Fn(char) -> f32) -> String {
+    let mut end = 0;
+    let mut width = 0.0;
+    for (index, character) in text.char_indices() {
+        let step = advance(character);
+        if width + step > max {
+            break;
+        }
+        width += step;
+        end = index + character.len_utf8();
+    }
+    let mut kept = &text[..end];
+    if end < text.len() && !text[end..].starts_with(' ') {
+        if let Some(space) = kept.rfind(' ') {
+            kept = &kept[..space];
+        }
+    }
+    kept.trim_end_matches(' ').to_owned()
 }
 
 /// Vanilla's ink for a dye at its plain brightness.
@@ -678,6 +716,18 @@ impl Metrics {
             v_max: (y + self.cell_h) as f32 / self.page_h,
         })
     }
+}
+
+fn cross(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn length(vector: [f32; 3]) -> f32 {
+    dot(vector, vector).sqrt()
 }
 
 fn sub(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
