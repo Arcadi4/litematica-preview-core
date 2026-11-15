@@ -7,6 +7,8 @@
 //! The board faces come from the mesher's public entity geometry: the front
 //! face is the largest face whose normal points the way the sign faces. The
 //! glyph frame therefore follows the mesher's sign model without repeating it.
+//! A line wider than the board starts at the board's leading edge and stops at
+//! its trailing edge, as the mesher's own board composite does.
 
 use schematic_mesher::atlas::AtlasRegion;
 use schematic_mesher::mesher::entity::{generate_entity_geometry, BlockEntityType, SignWood};
@@ -426,6 +428,9 @@ impl Glyphs<'_> {
             let top = centering + index as f32 * line_height;
             for byte in line.text.bytes() {
                 let step = self.metrics.advance(byte);
+                if cursor + step > width {
+                    break;
+                }
                 if let Some(cell) = self.metrics.cell(byte) {
                     if glow {
                         let shade = [
@@ -469,6 +474,9 @@ impl Glyphs<'_> {
     }
 
     fn quad(&mut self, frame: &Frame, block: [f32; 3], quad: Quad) {
+        let Some(quad) = clip(quad) else {
+            return;
+        };
         let base = self.cutout.positions.len() as u32;
         let corners = [
             (quad.x, quad.y),
@@ -523,6 +531,44 @@ struct Quad {
     /// Distance along the face normal, in blocks. The fill sits in front of
     /// the glow copy so coincident depths cannot hide it.
     outset: f32,
+}
+
+/// Trim a glyph quad to the board face, shrinking its cell by the same ratio so
+/// the glyph keeps its shape where a glow copy or a font cell overruns an edge.
+fn clip(mut quad: Quad) -> Option<Quad> {
+    let left = quad.x.max(0.0);
+    let right = (quad.x + quad.width).min(1.0);
+    let top = quad.y.max(0.0);
+    let bottom = (quad.y + quad.height).min(1.0);
+    if right <= left || bottom <= top {
+        return None;
+    }
+    let along =
+        |min: f32, max: f32, from: f32, to: f32| (min + (max - min) * from, min + (max - min) * to);
+    let cell = quad.cell;
+    let (u_min, u_max) = along(
+        cell.u_min,
+        cell.u_max,
+        (left - quad.x) / quad.width,
+        (right - quad.x) / quad.width,
+    );
+    let (v_min, v_max) = along(
+        cell.v_min,
+        cell.v_max,
+        (top - quad.y) / quad.height,
+        (bottom - quad.y) / quad.height,
+    );
+    quad.cell = Cell {
+        u_min,
+        u_max,
+        v_min,
+        v_max,
+    };
+    quad.x = left;
+    quad.y = top;
+    quad.width = right - left;
+    quad.height = bottom - top;
+    Some(quad)
 }
 
 /// One glyph cell, in page fractions.

@@ -1525,3 +1525,132 @@ fn distinct_board_texts_share_one_font_tile() {
     repeated.sort();
     assert_eq!(repeated, single, "no per-board tile enters the atlas");
 }
+
+/// A line wider than its board must stop at the board face. Before, every
+/// character was drawn, so long text streaked across the scene.
+#[test]
+fn overlong_board_text_stops_at_the_board_edge() {
+    const SIGN: (i32, i32, i32) = (2, 3, 4);
+    let message = "M".repeat(200);
+    let line = format!("{{\"text\":\"{message}\"}}");
+    let mut world = UniversalSchematic::new("long sign".into());
+    world.set_block(
+        SIGN.0,
+        SIGN.1,
+        SIGN.2,
+        &BlockState::new("minecraft:oak_sign"),
+    );
+    world.set_block_entity(
+        nucleation::block_position::BlockPosition::new(SIGN.0, SIGN.1, SIGN.2),
+        sign_entity(SIGN, [line.as_str(), "", "", ""], "black", false),
+    );
+
+    let pack = test_pack();
+    let config = crate::mesh_config();
+    let sub = |left: [f32; 3], right: [f32; 3]| {
+        [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
+    };
+    let dot = |left: [f32; 3], right: [f32; 3]| {
+        left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+    };
+    let cross = |left: [f32; 3], right: [f32; 3]| {
+        [
+            left[1] * right[2] - left[2] * right[1],
+            left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0],
+        ]
+    };
+    let length = |vector: [f32; 3]| dot(vector, vector).sqrt();
+
+    with_meshes(world, &pack, &config, None, |chunks| {
+        let mut plate: Option<([[f32; 3]; 3], f32)> = None;
+        let mut glyphs = Vec::new();
+        let mut glyph_triangles = 0;
+        for chunk in chunks {
+            let mesh = chunk.unwrap();
+            let font = mesh
+                .atlas
+                .get_region(super::sign_board::FONT_TILE)
+                .expect("the font tile reaches the mesh atlas");
+            for (layer, _, _) in parts(&mesh) {
+                for triangle in layer.indices.chunks_exact(3) {
+                    let vertices: [[f32; 3]; 3] =
+                        std::array::from_fn(|slot| layer.positions[triangle[slot] as usize]);
+                    let in_font = triangle.iter().all(|&index| {
+                        let uv = layer.uvs[index as usize];
+                        uv[0] >= font.u_min - 1e-6
+                            && uv[0] <= font.u_max + 1e-6
+                            && uv[1] >= font.v_min - 1e-6
+                            && uv[1] <= font.v_max + 1e-6
+                    });
+                    if in_font {
+                        glyph_triangles += 1;
+                        glyphs.extend(vertices);
+                        continue;
+                    }
+                    let area = length(cross(
+                        sub(vertices[1], vertices[0]),
+                        sub(vertices[2], vertices[0]),
+                    )) * 0.5;
+                    if plate.is_none_or(|(_, widest)| area > widest) {
+                        plate = Some((vertices, area));
+                    }
+                }
+            }
+        }
+        let (plate, _) = plate.expect("the plain board is the largest quad");
+        let corner = (0..3)
+            .find(|&index| {
+                let first = sub(plate[(index + 1) % 3], plate[index]);
+                let second = sub(plate[(index + 2) % 3], plate[index]);
+                dot(first, second).abs() < 1e-4 * length(first) * length(second)
+            })
+            .expect("the board quad has a right angle");
+        let origin = plate[corner];
+        let right = sub(plate[(corner + 1) % 3], origin);
+        let down = sub(plate[(corner + 2) % 3], origin);
+        let normal = cross(right, down);
+        let normal = [
+            normal[0] / length(normal),
+            normal[1] / length(normal),
+            normal[2] / length(normal),
+        ];
+        let along = |vertex: [f32; 3], basis: [f32; 3]| {
+            let mut offset = sub(vertex, origin);
+            let height = dot(offset, normal);
+            offset = [
+                offset[0] - normal[0] * height,
+                offset[1] - normal[1] * height,
+                offset[2] - normal[2] * height,
+            ];
+            dot(offset, basis) / dot(basis, basis)
+        };
+
+        assert!(glyph_triangles > 0, "the board draws its glyphs");
+        assert!(
+            glyph_triangles < message.len() * 2,
+            "a line wider than the board stops at its edge: {glyph_triangles} triangles"
+        );
+        let line_axis = if length(right) >= length(down) {
+            right
+        } else {
+            down
+        };
+        let (mut start, mut end) = (1.0f32, 0.0f32);
+        for glyph in glyphs {
+            let u = along(glyph, right);
+            let v = along(glyph, down);
+            assert!(
+                (-1e-3..=1.0 + 1e-3).contains(&u) && (-1e-3..=1.0 + 1e-3).contains(&v),
+                "glyph vertex {u} {v} leaves the board"
+            );
+            let step = along(glyph, line_axis);
+            start = start.min(step);
+            end = end.max(step);
+        }
+        assert!(
+            start < 0.15 && end > 0.85,
+            "the clipped line spans the board instead of ending at {start}..{end}"
+        );
+    });
+}
