@@ -31,8 +31,9 @@ fn formatting_color(dye: &str) -> &str {
     }
 }
 
-/// Text of one sign board. The mesher composites one board onto every face it
-/// draws, so a sign whose front board is empty uses its back board instead.
+/// Text of one sign board, in slot order. The mesher composites one board onto
+/// every face it draws, so a sign whose front board is empty uses its back
+/// board instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SignText {
     lines: Vec<String>,
@@ -78,13 +79,12 @@ fn board(nbt: &NbtMap, key: &str) -> Option<SignText> {
     let NbtValue::List(messages) = board.get("messages")? else {
         return None;
     };
-    let lines = messages
-        .iter()
-        .filter_map(|message| match message {
-            NbtValue::String(text) => Some(text),
+    let lines = (0..MAX_LINES)
+        .map(|index| match messages.get(index) {
+            Some(NbtValue::String(text)) => bounded(text).map(String::as_str),
             _ => None,
         })
-        .filter_map(bounded);
+        .collect();
     let color = string(board.get("color"));
     let glowing =
         matches!(board.get("has_glowing_text"), Some(NbtValue::Byte(value)) if *value != 0);
@@ -94,28 +94,37 @@ fn board(nbt: &NbtMap, key: &str) -> Option<SignText> {
 /// A pre-1.20 board: `Text1`..`Text4`, `Color`, and `GlowingText`.
 fn legacy(nbt: &NbtMap) -> Option<SignText> {
     let lines = (1..=MAX_LINES)
-        .filter_map(|index| nbt.get(&format!("Text{index}")))
-        .filter_map(|value| match value {
-            NbtValue::String(text) => Some(text),
+        .map(|index| match nbt.get(&format!("Text{index}")) {
+            Some(NbtValue::String(text)) => bounded(text).map(String::as_str),
             _ => None,
         })
-        .filter_map(bounded);
+        .collect();
     let color = string(nbt.get("Color"));
     let glowing = matches!(nbt.get("GlowingText"), Some(NbtValue::Byte(value)) if *value != 0);
     assemble(lines, color, glowing)
 }
 
-fn assemble<'a>(
-    lines: impl Iterator<Item = &'a String>,
-    color: Option<&str>,
-    glowing: bool,
-) -> Option<SignText> {
-    let lines: Vec<String> = lines
-        .filter(|line| !line.is_empty())
-        .take(MAX_LINES)
-        .cloned()
+/// Text of one board in its four slots. A blank slot stays in place, because
+/// the board layout keeps each written line where it was typed; a missing or
+/// oversized line leaves its slot empty instead of moving the lines below it.
+fn assemble(lines: Vec<Option<&str>>, color: Option<&str>, glowing: bool) -> Option<SignText> {
+    let blank = lines
+        .iter()
+        .all(|line| line.is_none_or(|text| text.is_empty()));
+    if blank {
+        return None;
+    }
+    let lines: Vec<String> = (0..MAX_LINES)
+        .map(|index| {
+            lines
+                .get(index)
+                .copied()
+                .flatten()
+                .unwrap_or_default()
+                .to_owned()
+        })
         .collect();
-    (!lines.is_empty()).then(|| SignText {
+    Some(SignText {
         lines,
         color: formatting_color(color.unwrap_or(DEFAULT_COLOR)).to_owned(),
         glowing,
@@ -174,7 +183,10 @@ mod tests {
             true,
         );
         let text = read(&nbt).expect("front board text");
-        assert_eq!(text.lines, ["{\"text\":\"one\"}", "{\"text\":\"three\"}"]);
+        assert_eq!(
+            text.lines,
+            ["{\"text\":\"one\"}", "", "{\"text\":\"three\"}", ""]
+        );
         assert_eq!(text.color, "aqua", "the dye maps to its formatting color");
         assert!(text.glowing);
         let mut block = InputBlock::new("minecraft:oak_sign");
@@ -183,11 +195,11 @@ mod tests {
             block.properties.get("text1").map(String::as_str),
             Some("{\"text\":\"one\"}")
         );
+        assert_eq!(block.properties.get("text2").map(String::as_str), Some(""));
         assert_eq!(
-            block.properties.get("text2").map(String::as_str),
+            block.properties.get("text3").map(String::as_str),
             Some("{\"text\":\"three\"}")
         );
-        assert_eq!(block.properties.get("text3"), None);
         assert_eq!(
             block.properties.get("color").map(String::as_str),
             Some("aqua")
@@ -209,7 +221,7 @@ mod tests {
         nbt.insert("back_text".to_owned(), NbtValue::Compound(back));
         assert_eq!(
             read(&nbt).expect("back board text").lines,
-            ["{\"text\":\"behind\"}"]
+            ["{\"text\":\"behind\"}", "", "", ""]
         );
     }
 
@@ -222,7 +234,7 @@ mod tests {
         nbt.insert("Color".to_owned(), NbtValue::String("brown".to_owned()));
         nbt.insert("GlowingText".to_owned(), NbtValue::Byte(1));
         let text = read(&nbt).expect("legacy board text");
-        assert_eq!(text.lines, ["hello", "world"]);
+        assert_eq!(text.lines, ["hello", "", "", "world"]);
         assert_eq!(text.color, "gold");
         assert!(text.glowing);
     }

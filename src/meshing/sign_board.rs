@@ -26,7 +26,8 @@ pub(super) const FONT_TILE: &str = "_font/ascii";
 /// Block properties that make the mesher composite a board image.
 const BOARD_PROPERTIES: [&str; 6] = ["text1", "text2", "text3", "text4", "color", "glowing"];
 
-/// Line slots on a board. Text centers over the filled slots.
+/// Line slots on a board. A written line keeps its slot, so a blank slot leaves
+/// the gap vanilla leaves.
 const LINES: usize = 4;
 
 /// The composited board image is upscaled by this factor, so a font pixel is a
@@ -173,19 +174,25 @@ fn sign_wood(stem: &str) -> Option<SignWood> {
     })
 }
 
-/// Board lines with their color, or `None` when the board is blank.
-fn lines(block: &InputBlock) -> Option<Vec<Line>> {
+/// Board lines in their slot order, or `None` when the board is blank. A blank
+/// slot stays blank: vanilla keeps every written line in the slot it was typed
+/// into instead of stacking the written lines together.
+fn lines(block: &InputBlock) -> Option<Vec<Option<Line>>> {
     let dye = block
         .properties
         .get("color")
         .and_then(|name| color(name))
         .map(rgb)
         .unwrap_or([0.0, 0.0, 0.0]);
-    let lines: Vec<Line> = (1..=LINES)
-        .filter_map(|index| block.properties.get(&format!("text{index}")))
-        .filter_map(|raw| line(raw, dye))
+    let slots: Vec<Option<Line>> = (1..=LINES)
+        .map(|index| {
+            block
+                .properties
+                .get(&format!("text{index}"))
+                .and_then(|raw| line(raw, dye))
+        })
         .collect();
-    (!lines.is_empty()).then_some(lines)
+    slots.iter().any(Option::is_some).then_some(slots)
 }
 
 /// One board line: the visible text and its color.
@@ -414,7 +421,7 @@ fn facing(properties: &HashMap<String, String>) -> Option<[f32; 3]> {
 struct Glyphs<'a> {
     metrics: &'a Metrics,
     font: &'a AtlasRegion,
-    lines: &'a [Line],
+    lines: &'a [Option<Line>],
     glow: bool,
     cutout: &'a mut MeshLayer,
 }
@@ -425,9 +432,11 @@ impl Glyphs<'_> {
         let height = frame.texels.1 * BOARD_UPSCALE;
         let line_height = height / LINES as f32;
         let glyph_height = self.metrics.cell_h as f32;
-        let centering = (LINES - self.lines.len()) as f32 * line_height / 2.0;
         let glow = self.glow;
         for (index, line) in self.lines.iter().enumerate() {
+            let Some(line) = line else {
+                continue;
+            };
             let ink = if glow { line.color } else { shade(line.color) };
             let outline = glow.then(|| {
                 if line.color == [0.0; 3] {
@@ -442,7 +451,7 @@ impl Glyphs<'_> {
                 .map(|byte| self.metrics.advance(byte))
                 .sum();
             let mut cursor = (width - advance).max(0.0) / 2.0;
-            let top = centering + index as f32 * line_height;
+            let top = index as f32 * line_height;
             for byte in line.text.bytes() {
                 let step = self.metrics.advance(byte);
                 if cursor + step > width {

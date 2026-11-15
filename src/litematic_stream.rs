@@ -422,9 +422,10 @@ impl<'a, F: Fn() -> Result<(), String>> Scan<'a, F> {
                         | Keep::SignMessage
                 ))?;
                 Ok(match (keep, text) {
-                    // A board line beyond the retained length is dropped.
+                    // An oversized board line keeps its slot, so the lines below
+                    // it stay where the board shows them.
                     (Keep::SignMessage, Some(text)) if text.len() > sign_text::MAX_LINE_BYTES => {
-                        None
+                        Some(NbtTag::String(String::new()))
                     }
                     (_, Some(text)) => Some(NbtTag::String(text)),
                     (_, None) => None,
