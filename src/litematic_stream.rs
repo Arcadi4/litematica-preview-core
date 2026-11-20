@@ -820,8 +820,8 @@ fn prepare(
         region_count = region_count.checked_add(1).ok_or("region count overflow")?;
         let origin = super::triple(&fields.coordinates, "Position")?;
         let size = super::triple(&fields.coordinates, "Size")?;
-        let width = i64::from(size.0).abs() as usize;
-        let length = i64::from(size.2).abs() as usize;
+        let width = i64::from(size.0).unsigned_abs() as usize;
+        let length = i64::from(size.2).unsigned_abs() as usize;
         let volume = limits
             .check_dimensions((width as i64, i64::from(size.1).abs(), length as i64))
             .map_err(|error| error.to_string())?;
