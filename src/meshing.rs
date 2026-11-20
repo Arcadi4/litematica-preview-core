@@ -1056,18 +1056,18 @@ impl<'a> ChunkMeshes<'a> {
         // Unpack once, exactly sized: the mesher consumes absolute positions,
         // and a batch's blocks are a few hundred kilobytes either way.
         let blocks: Vec<(BlockPosition, u32)> = chunk.records(origin).collect();
-        let mut mesh = builder::mesh(
-            self.pack,
-            &self.config,
-            &self.atlas,
-            &self.source.palette,
-            &self.atlas_only,
-            &self.wet,
-            &blocks,
-            &context,
+        let mut mesh = builder::mesh(builder::MeshParams {
+            pack: self.pack,
+            config: &self.config,
+            shared_atlas: &self.atlas,
+            palette: &self.source.palette,
+            atlas_only: &self.atlas_only,
+            wet: &self.wet,
+            blocks: &blocks,
+            context: &context,
             entities,
             bounds,
-        )?;
+        })?;
         mesh.chunk_coord = self.source.chunk_size.map(|_| *coord);
         Ok(mesh)
     }

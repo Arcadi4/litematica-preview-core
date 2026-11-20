@@ -758,18 +758,18 @@ fn generated_texture_cannot_repack_an_already_shared_atlas() {
     let atlas = atlas::build(pack.pack(), &config, std::iter::empty()).unwrap();
     let position = BlockPosition::new(0, 0, 0);
     let palette = [block];
-    let result = builder::mesh(
-        pack.pack(),
-        &config,
-        &atlas,
-        &palette,
-        &[false],
-        &[builder::wet(&palette[0])],
-        &[(position, 0)],
-        &[(position, &palette[0])],
-        &[],
-        BoundingBox::new([0.0; 3], [1.0; 3]),
-    );
+    let result = builder::mesh(builder::MeshParams {
+        pack: pack.pack(),
+        config: &config,
+        shared_atlas: &atlas,
+        palette: &palette,
+        atlas_only: &[false],
+        wet: &[builder::wet(&palette[0])],
+        blocks: &[(position, 0)],
+        context: &[(position, &palette[0])],
+        entities: &[],
+        bounds: BoundingBox::new([0.0; 3], [1.0; 3]),
+    });
     assert!(
         result.is_err(),
         "a late generated texture must never change earlier chunks' UV layout"
