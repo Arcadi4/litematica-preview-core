@@ -165,6 +165,8 @@ pub(crate) fn test_pack_with_font(font: Option<(u32, u32, Vec<u8>)>) -> Resource
     ResourcePackSource::from_resource_pack(pack)
 }
 
+// Shared by lib and integration test targets; unused by some targets.
+#[allow(dead_code)]
 pub(crate) fn schematic(blocks: &[(i32, i32, i32, &str)]) -> UniversalSchematic {
     let mut schematic = UniversalSchematic::new("chunk regression".into());
     for &(x, y, z, name) in blocks {
