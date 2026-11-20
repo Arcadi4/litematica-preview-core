@@ -263,7 +263,7 @@ pub fn sort_triangles(triangles: &mut [Triangle]) {
 }
 
 fn sort_vertices(vertices: &mut [[f64; 10]; 3]) {
-    vertices.sort_unstable_by(|left, right| compare_slots(left, right));
+    vertices.sort_unstable_by(compare_slots);
 }
 
 fn compare_slots(left: &[f64; 10], right: &[f64; 10]) -> std::cmp::Ordering {
