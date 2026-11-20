@@ -68,7 +68,10 @@ fn with_meshes<R>(
     inspect(&mut meshes)
 }
 
-fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> Vec<((i32, i32, i32), String)> {
+type Position = (i32, i32, i32);
+type ChunkEntries = Vec<(Position, String)>;
+
+fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> ChunkEntries {
     let chunk = &source.chunks[source
         .chunks
         .binary_search_by_key(&coord, |(coord, _, _)| *coord)
@@ -88,8 +91,8 @@ fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> Vec<((i32, i32, i32), 
 fn grouped_by_chunk(
     positions: &[(i32, i32, i32, &str)],
     size: i32,
-) -> Vec<(ChunkCoord, Vec<((i32, i32, i32), String)>)> {
-    let mut grouped: HashMap<ChunkCoord, Vec<((i32, i32, i32), String)>> = HashMap::new();
+) -> Vec<(ChunkCoord, ChunkEntries)> {
+    let mut grouped: HashMap<ChunkCoord, ChunkEntries> = HashMap::new();
     for &(x, y, z, name) in positions {
         let coord = chunk_coord(BlockPosition::new(x, y, z), size);
         grouped
