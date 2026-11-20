@@ -28,10 +28,10 @@ There is no Node.js tooling; every task is a cargo command.
 
 - Preserve bounded decoding, Java binary NBT fallback, and brace-state SNBT
   normalization until real fixtures justify changes.
-- schematic-mesher turns `facing=east` and `facing=west` chests the wrong
-  way round, and mounts `north` and `south` item frames on the opposite block
-  boundary. The input mapping in `src/meshing.rs` compensates for both. Remove
-  that compensation with the upstream fix.
+- schematic-mesher 0.2.2 still mounts `north` and `south` item frames on the
+  opposite block boundary. The input mapping in `src/meshing.rs` compensates for
+  it. Remove that compensation with the upstream fix. `east`/`west` chest facing
+  was fixed in 0.2.2, so chest facing must not be mirrored.
 - Blended layers draw in emission order without sorting. Mesh fluids, and the water
   of waterlogged blocks, before every other state so panes blend over the water
   behind them from any side.

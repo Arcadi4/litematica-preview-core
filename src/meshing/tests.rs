@@ -1029,44 +1029,6 @@ fn meshed_state(state: &BlockState, block: (i32, i32, i32)) -> Vec<[f32; 3]> {
 }
 
 #[test]
-fn chest_facing_mirrors_east_and_west_only() {
-    for (facing, expected) in [
-        ("north", "north"),
-        ("south", "south"),
-        ("east", "west"),
-        ("west", "east"),
-    ] {
-        for id in [
-            "minecraft:chest",
-            "minecraft:trapped_chest",
-            "minecraft:ender_chest",
-        ] {
-            let mut state = BlockState::new(id);
-            state.properties.push(("facing".into(), facing.into()));
-            state.properties.push(("type".into(), "single".into()));
-            let block = block_state_to_input_block(&state);
-            assert_eq!(
-                block.properties.get("facing").map(String::as_str),
-                Some(expected),
-                "{id} facing {facing}"
-            );
-        }
-    }
-
-    // Blocks that the mesher turns correctly keep their own facing.
-    for id in ["minecraft:oak_stairs", "minecraft:barrel"] {
-        let mut state = BlockState::new(id);
-        state.properties.push(("facing".into(), "east".into()));
-        let block = block_state_to_input_block(&state);
-        assert_eq!(
-            block.properties.get("facing").map(String::as_str),
-            Some("east"),
-            "{id}"
-        );
-    }
-}
-
-#[test]
 fn item_frame_facing_byte_wins_over_the_rotation_yaw() {
     for (facing, expected) in [
         (0i8, "down"),
