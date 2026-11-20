@@ -1,9 +1,9 @@
 //! Renderer-neutral, independently owned upload batches.
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 
 use nucleation::meshing::{MeshLayer, MeshOutput};
 
-use crate::{parts, PreviewInfo};
+use crate::{PreviewInfo, parts};
 
 /// UNORM16x4 position, float2 UV, SNORM8x4 normal, UNORM8x4 color.
 /// All multibyte values are little-endian; each part starts on a 4-byte boundary.

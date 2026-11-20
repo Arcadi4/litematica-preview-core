@@ -10,7 +10,7 @@ use schematic_mesher::resolver::ModelResolver;
 use schematic_mesher::{
     BlockPosition, BoundingBox, InputBlock, MesherConfig, ResourcePack, TextureAtlas,
 };
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 mod atlas;
 mod builder;

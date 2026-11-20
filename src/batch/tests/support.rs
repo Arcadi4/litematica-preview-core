@@ -348,7 +348,10 @@ pub fn assert_same_triangles(actual: &[Triangle], expected: &[Triangle], toleran
                 }
             }
         }
-        assert!(matched, "triangle {index} has no matching geometry/material within the quantization bounds: {triangle:?}");
+        assert!(
+            matched,
+            "triangle {index} has no matching geometry/material within the quantization bounds: {triangle:?}"
+        );
     }
 }
 

@@ -14,7 +14,7 @@
 //! with the dye over an outline of that shade or [`BLACK_OUTLINE`].
 
 use schematic_mesher::atlas::AtlasRegion;
-use schematic_mesher::mesher::entity::{generate_entity_geometry, BlockEntityType, SignWood};
+use schematic_mesher::mesher::entity::{BlockEntityType, SignWood, generate_entity_geometry};
 use schematic_mesher::resource_pack::{ResourcePack, TextureData};
 use schematic_mesher::{BlockPosition, InputBlock, MeshLayer};
 use std::collections::HashMap;

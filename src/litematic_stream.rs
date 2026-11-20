@@ -9,7 +9,7 @@ use nucleation::block_entity::BlockEntity;
 use nucleation::formats::limits::DecodeLimits;
 use nucleation::meshing::player_heads::{self, PlayerProfile};
 use nucleation::{BlockState, BoundingBox, Entity};
-use quartz_nbt::{io::Flavor, NbtCompound, NbtList, NbtTag};
+use quartz_nbt::{NbtCompound, NbtList, NbtTag, io::Flavor};
 use schematic_mesher::BlockPosition;
 
 use crate::meshing::{CompactBlocks, CompactBlocksBuilder, PaletteEntry};

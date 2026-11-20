@@ -2,9 +2,9 @@
 use std::cell::Cell;
 use std::io::Write;
 
-use flate2::{write::GzEncoder, Compression};
+use flate2::{Compression, write::GzEncoder};
 use litematica_preview_core::{
-    decode, load_chunks, mesh_config, MeshBatch, PreviewInfo, PreviewOptions, VERTEX_STRIDE,
+    MeshBatch, PreviewInfo, PreviewOptions, VERTEX_STRIDE, decode, load_chunks, mesh_config,
 };
 use nucleation::meshing::{MeshOutput, ResourcePackSource};
 use quartz_nbt::{NbtCompound, NbtList, NbtTag};
@@ -758,7 +758,7 @@ fn parallel_cancel_after_first_chunk_never_publishes_stale_work() {
 
 #[test]
 fn pull_stream_cancellation_discards_prefetched_batches_before_publication() {
-    use litematica_preview_core::{decode_with_options, MeshStream};
+    use litematica_preview_core::{MeshStream, decode_with_options};
     use nucleation::formats::limits::DecodeLimits;
 
     let pack = fixtures::test_pack();
@@ -798,7 +798,7 @@ fn pull_stream_cancellation_discards_prefetched_batches_before_publication() {
 
 #[test]
 fn the_pull_stream_keeps_the_packed_layout_for_geometry_that_spans_chunks() {
-    use litematica_preview_core::{decode_with_options, MeshStream};
+    use litematica_preview_core::{MeshStream, decode_with_options};
     use nucleation::formats::limits::DecodeLimits;
 
     let pack = fixtures::test_pack();
@@ -868,7 +868,7 @@ fn the_pull_stream_keeps_the_packed_layout_for_geometry_that_spans_chunks() {
 
 #[test]
 fn taking_the_atlas_first_leaves_no_batch_publishing_it() {
-    use litematica_preview_core::{decode_with_options, MeshStream};
+    use litematica_preview_core::{MeshStream, decode_with_options};
     use nucleation::formats::limits::DecodeLimits;
 
     let pack = fixtures::test_pack();

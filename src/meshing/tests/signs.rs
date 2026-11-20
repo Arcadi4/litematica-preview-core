@@ -647,9 +647,11 @@ fn dense_sign_wall_stays_bounded_and_shares_one_font_tile() {
     let atlas = source
         .atlas(&pack, &mesher_config(&config))
         .expect("shared atlas");
-    assert!(atlas
-        .regions
-        .contains_key(super::super::sign_board::FONT_TILE));
+    assert!(
+        atlas
+            .regions
+            .contains_key(super::super::sign_board::FONT_TILE)
+    );
     for path in atlas.regions.keys() {
         assert!(
             !path.starts_with("_sign/") && !path.starts_with("_hanging_sign/"),

@@ -290,11 +290,13 @@ fn declared_oversized_truncated_and_invalid_litematics_fail_recoverably() {
         ((65, 1, 1), vec![0, 0]),
         ((1, 1, 1), vec![3]),
     ] {
-        assert!(decode(&gzip_nbt(&litematic(vec![(
-            "invalid",
-            region(size, &air, &packed)
-        )])))
-        .is_err());
+        assert!(
+            decode(&gzip_nbt(&litematic(vec![(
+                "invalid",
+                region(size, &air, &packed)
+            )])))
+            .is_err()
+        );
     }
     for bits in [2, 3] {
         let palette: Vec<_> = (0..1usize << bits)
@@ -314,11 +316,13 @@ fn declared_oversized_truncated_and_invalid_litematics_fail_recoverably() {
     let mut chest = NbtCompound::new();
     chest.insert("Pos", NbtTag::IntArray(vec![0]));
     malformed_entity.insert("TileEntities", NbtList::from(vec![NbtTag::Compound(chest)]));
-    assert!(decode(&gzip_nbt(&litematic(vec![(
-        "bad entity",
-        malformed_entity
-    )])))
-    .is_err());
+    assert!(
+        decode(&gzip_nbt(&litematic(vec![(
+            "bad entity",
+            malformed_entity
+        )])))
+        .is_err()
+    );
     assert_eq!(
         decode(&fixture("Classic.schematic"))
             .unwrap()

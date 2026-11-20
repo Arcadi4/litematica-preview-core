@@ -3,7 +3,7 @@ use nucleation::{BlockState, UniversalSchematic};
 use schematic_mesher::resource_pack::{
     BlockModel, BlockstateDefinition, ModelElement, ModelFace, ModelVariant, TextureData,
 };
-use schematic_mesher::{types::Direction, ResourcePack};
+use schematic_mesher::{ResourcePack, types::Direction};
 use std::collections::HashMap;
 
 /// A 16 by 16 grid page with one opaque pixel in each cell.

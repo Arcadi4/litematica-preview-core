@@ -2,7 +2,7 @@
 //! Results always use the compact 24-byte vertex layout. Use `load_chunks`
 //! when wide unchunked geometry needs the float-position fallback.
 use crate::{
-    batch::BatchPacker, meshing::ChunkMeshes, parallel, DecodedSchematic, MeshBatch, Texture,
+    DecodedSchematic, MeshBatch, Texture, batch::BatchPacker, meshing::ChunkMeshes, parallel,
 };
 use nucleation::meshing::{MeshConfig, MeshOutput, ResourcePackSource};
 use std::collections::VecDeque;

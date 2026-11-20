@@ -9,8 +9,8 @@
 use std::collections::HashSet;
 use std::io::{Cursor, Write};
 
-use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use lz4_flex::block;
 use nucleation::block_position::BlockPosition;
 use nucleation::formats::anvil::{ChunkData, RegionReader};

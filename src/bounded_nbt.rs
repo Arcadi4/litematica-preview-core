@@ -4,7 +4,7 @@ use std::io::{Cursor, Read};
 
 use flate2::read::GzDecoder;
 use nucleation::formats::limits::DecodeLimits;
-use quartz_nbt::{io::Flavor, NbtCompound};
+use quartz_nbt::{NbtCompound, io::Flavor};
 
 pub(super) fn gzip_root(data: &[u8], limits: &DecodeLimits) -> Result<NbtCompound, String> {
     limits

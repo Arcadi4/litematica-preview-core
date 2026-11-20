@@ -115,10 +115,11 @@ fn adjacent_core_blocks_have_no_hidden_boundary_faces_with_greedy() {
         for chunk in chunks {
             let mesh = chunk.unwrap();
             visible_area += area(&mesh);
-            assert!(mesh
-                .greedy_materials
-                .iter()
-                .any(|m| !m.opaque.indices.is_empty()));
+            assert!(
+                mesh.greedy_materials
+                    .iter()
+                    .any(|m| !m.opaque.indices.is_empty())
+            );
             for (layer, _, _) in parts(&mesh) {
                 for indices in layer.indices.chunks_exact(3) {
                     assert!(
@@ -297,11 +298,12 @@ fn greedy_mode_keeps_cutouts_and_repeat_uvs() {
     });
     assert!(parts(&mesh).any(|(_, _, alpha)| alpha == 1));
     assert!(parts(&mesh).any(|(_, _, alpha)| alpha == 2));
-    assert!(mesh
-        .greedy_materials
-        .iter()
-        .flat_map(|material| material.opaque.uvs.iter())
-        .any(|uv| uv[0] > 1.0 || uv[1] > 1.0));
+    assert!(
+        mesh.greedy_materials
+            .iter()
+            .flat_map(|material| material.opaque.uvs.iter())
+            .any(|uv| uv[0] > 1.0 || uv[1] > 1.0)
+    );
     assert!((area(&mesh) - 30.0).abs() < 1e-6);
 }
 
@@ -728,11 +730,13 @@ fn greedy_mode_preserves_mixed_cutout_faces_and_missing_texture_pixels() {
     let greedy = build(true);
     let unmerged = build(false);
     assert_eq!(triangles(&greedy), triangles(&unmerged));
-    assert!(greedy
-        .cutout
-        .normals
-        .iter()
-        .all(|normal| *normal == [0.0, 1.0, 0.0]));
+    assert!(
+        greedy
+            .cutout
+            .normals
+            .iter()
+            .all(|normal| *normal == [0.0, 1.0, 0.0])
+    );
     assert_eq!(greedy.cutout.indices.len() / 3, 4);
     let missing = greedy.atlas.get_region("__missing__").unwrap();
     let mut missing_vertices = 0;

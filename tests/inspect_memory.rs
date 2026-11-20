@@ -9,7 +9,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
-use litematica_preview_core::{decode, load_chunks, PreviewOptions};
+use litematica_preview_core::{PreviewOptions, decode, load_chunks};
 use nucleation::meshing::ResourcePackSource;
 
 struct Meter;
@@ -62,11 +62,7 @@ fn adjust(bytes: usize, increase: bool) -> usize {
 fn event(kind: usize, bytes: usize, live: usize) {
     if ACTIVE.load(SeqCst) && bytes >= LARGE {
         match NEXT.fetch_update(SeqCst, SeqCst, |next| {
-            if next < SLOTS {
-                Some(next + 1)
-            } else {
-                None
-            }
+            if next < SLOTS { Some(next + 1) } else { None }
         }) {
             Ok(slot) => {
                 EVENTS[slot].bytes.store(bytes, SeqCst);
@@ -190,7 +186,12 @@ fn inspect_decoder_allocations() {
     let measured_seconds = started.elapsed().as_secs_f64();
     let peak = PEAK.load(SeqCst);
     let retained = LIVE.load(SeqCst);
-    println!("input={path:?} mode={mode} input_bytes={} baseline={baseline} measured_peak={peak} peak_delta={} retained_after_return_delta={}", bytes.len(), peak.saturating_sub(baseline), retained.saturating_sub(baseline));
+    println!(
+        "input={path:?} mode={mode} input_bytes={} baseline={baseline} measured_peak={peak} peak_delta={} retained_after_return_delta={}",
+        bytes.len(),
+        peak.saturating_sub(baseline),
+        retained.saturating_sub(baseline)
+    );
     println!("measured_seconds={measured_seconds:.6}");
     for (index, event) in EVENTS.iter().take(NEXT.load(SeqCst)).enumerate() {
         println!(
@@ -200,11 +201,25 @@ fn inspect_decoder_allocations() {
             event.live.load(SeqCst).saturating_sub(baseline)
         );
     }
-    println!("event_kinds: 1=alloc,2=free,3=realloc_final_size; event_threshold_bytes={LARGE} dropped_events={} invalid_meter={}", DROPPED.load(SeqCst), INVALID.load(SeqCst));
-    println!("Scope: Rust requested allocations only; excludes allocator overhead, realloc transient overlap, host/WebView/GPU and Job Object enforcement.");
+    println!(
+        "event_kinds: 1=alloc,2=free,3=realloc_final_size; event_threshold_bytes={LARGE} dropped_events={} invalid_meter={}",
+        DROPPED.load(SeqCst),
+        INVALID.load(SeqCst)
+    );
+    println!(
+        "Scope: Rust requested allocations only; excludes allocator overhead, realloc transient overlap, host/WebView/GPU and Job Object enforcement."
+    );
     if mode == "preview" {
         if let Some(info) = first_chunk {
-            println!("preview_complete=false stopped_at=first_consume block_count={} block_entity_count={} first_chunk_triangles={} first_chunk_min={:?} first_chunk_max={:?} live_at_first_callback_delta={}", info.block_count, info.block_entity_count, info.triangle_count, info.min, info.max, callback_live.saturating_sub(baseline));
+            println!(
+                "preview_complete=false stopped_at=first_consume block_count={} block_entity_count={} first_chunk_triangles={} first_chunk_min={:?} first_chunk_max={:?} live_at_first_callback_delta={}",
+                info.block_count,
+                info.block_entity_count,
+                info.triangle_count,
+                info.min,
+                info.max,
+                callback_live.saturating_sub(baseline)
+            );
         } else {
             println!("preview_complete=false first_consume_reached=false result={result:?}");
         }
@@ -233,7 +248,9 @@ fn inspect_decoder_allocations() {
                 region.count_blocks()
             );
         }
-        println!("dense_decode_complete=true block_count={blocks} block_entity_count={block_entities} entity_count={entities}");
+        println!(
+            "dense_decode_complete=true block_count={blocks} block_entity_count={block_entities} entity_count={entities}"
+        );
         drop(schematic);
         println!(
             "after_drop_delta={}",

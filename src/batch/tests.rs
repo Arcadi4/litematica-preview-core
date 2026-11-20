@@ -8,9 +8,9 @@ use super::{BatchPacker, MeshBatch, Texture};
 use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 use nucleation::meshing::{MeshLayer, MeshOutput};
+use schematic_mesher::TextureAtlas;
 use schematic_mesher::mesh_output::GreedyMaterialOutput;
 use schematic_mesher::types::BoundingBox;
-use schematic_mesher::TextureAtlas;
 
 fn packer(max_quantized_extent: f32) -> BatchPacker {
     BatchPacker::new(

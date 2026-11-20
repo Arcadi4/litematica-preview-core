@@ -1,6 +1,6 @@
+use nucleation::BoundingBox;
 use nucleation::block_entity::BlockEntity;
 use nucleation::formats::limits::DecodeLimits;
-use nucleation::BoundingBox;
 use nucleation::{BlockState, Entity, Region, UniversalSchematic};
 use quartz_nbt::{NbtCompound, NbtList, NbtTag};
 
@@ -470,16 +470,18 @@ mod tests {
         root.insert("Palette", palette);
         root.insert("BlockData", NbtTag::ByteArray(vec![0]));
         let bytes = gzip(&root);
-        assert!(read_compact(
-            &bytes,
-            &super::super::preview_limits(),
-            None,
-            None,
-            false,
-            &|| Ok(())
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            read_compact(
+                &bytes,
+                &super::super::preview_limits(),
+                None,
+                None,
+                false,
+                &|| Ok(())
+            )
+            .unwrap()
+            .is_none()
+        );
         let (compact, warnings) = super::super::decode_preview(
             &bytes,
             &super::super::preview_limits(),
@@ -572,25 +574,29 @@ mod tests {
         assert_eq!(preview_error.to_string(), error);
         let mut missing_metadata = root_with_indices(&palette, &[0]);
         missing_metadata.inner_mut().shift_remove("Metadata");
-        assert!(read_compact(
-            &gzip(&missing_metadata),
-            &super::super::preview_limits(),
-            None,
-            None,
-            false,
-            &|| Ok(())
-        )
-        .is_err());
-        assert!(read_compact(
-            &gzip(&NbtCompound::new()),
-            &super::super::preview_limits(),
-            None,
-            None,
-            false,
-            &|| Ok(())
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            read_compact(
+                &gzip(&missing_metadata),
+                &super::super::preview_limits(),
+                None,
+                None,
+                false,
+                &|| Ok(())
+            )
+            .is_err()
+        );
+        assert!(
+            read_compact(
+                &gzip(&NbtCompound::new()),
+                &super::super::preview_limits(),
+                None,
+                None,
+                false,
+                &|| Ok(())
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 
     #[test]

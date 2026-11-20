@@ -17,7 +17,7 @@ mod sign_text;
 mod stream;
 use batch::BatchPacker;
 pub use batch::{MeshBatch, MeshPart, Texture, VERTEX_STRIDE};
-pub use decode::{decode, DecodeFailure};
+pub use decode::{DecodeFailure, decode};
 pub use stream::MeshStream;
 
 /// Decoded occupied blocks and entities; mesh streams borrow this source.
@@ -286,7 +286,9 @@ pub fn resource_pack_overlay(
         metadata |= file.name_raw() == b"pack.mcmeta";
     }
     if !metadata {
-        return Err(invalid("The ZIP must contain pack.mcmeta and assets at its top level. Choose a Minecraft Java resource pack."));
+        return Err(invalid(
+            "The ZIP must contain pack.mcmeta and assets at its top level. Choose a Minecraft Java resource pack.",
+        ));
     }
     let mut custom =
         ResourcePackSource::from_bytes(bytes).map_err(|error| invalid(&error.to_string()))?;

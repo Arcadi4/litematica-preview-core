@@ -1,4 +1,4 @@
-use litematica_preview_core::{decode, load_chunks, mesh_config, PreviewInfo, PreviewOptions};
+use litematica_preview_core::{PreviewInfo, PreviewOptions, decode, load_chunks, mesh_config};
 use std::cell::Cell;
 
 #[path = "../src/batch/tests/support.rs"]

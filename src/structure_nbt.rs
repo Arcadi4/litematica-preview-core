@@ -7,7 +7,7 @@ use nucleation::nbt::NbtMap;
 use nucleation::{BlockState, Entity, Region, UniversalSchematic};
 use quartz_nbt::{NbtCompound, NbtList, NbtTag};
 
-use super::{bounded_nbt, DecodeFailure};
+use super::{DecodeFailure, bounded_nbt};
 
 /// Return `None` when the input is not a binary Java structure.
 pub(super) fn try_load(

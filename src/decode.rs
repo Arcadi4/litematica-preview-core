@@ -7,11 +7,11 @@
 
 use std::fmt;
 
+use nucleation::UniversalSchematic;
 use nucleation::formats::limits::DecodeLimits;
 use nucleation::formats::{
     classic_schematic, manager::SchematicImporter, mcstructure, snapshot, structure_snbt, world,
 };
-use nucleation::UniversalSchematic;
 use regex::Regex;
 
 use crate::meshing::CompactBlocks;
@@ -327,7 +327,11 @@ mod tests {
                 decode_preview(&bytes, &preview_limits(), Some(64), None, false, &|| Ok(()))
                     .unwrap();
             let seconds = start.elapsed().as_secs_f64();
-            println!("compact_decode iteration={iteration} seconds={seconds:.6} blocks={} block_entities={}", source.block_count(), source.block_entity_count());
+            println!(
+                "compact_decode iteration={iteration} seconds={seconds:.6} blocks={} block_entities={}",
+                source.block_count(),
+                source.block_entity_count()
+            );
             if iteration != 0 {
                 samples.push(seconds);
             }

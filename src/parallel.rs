@@ -2,9 +2,9 @@
 
 use crate::max_worker_threads;
 use std::sync::{
+    Mutex,
     atomic::{AtomicBool, Ordering},
     mpsc::sync_channel,
-    Mutex,
 };
 
 /// Maximum source blocks per decode task. Packed and dense tasks own at most 128 KiB
@@ -232,7 +232,7 @@ pub(crate) fn shard_map<T: Sync, S, R: Send>(
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use std::sync::{atomic::AtomicUsize, Barrier};
+    use std::sync::{Barrier, atomic::AtomicUsize};
 
     #[test]
     fn workers_compute_concurrently_but_publish_in_source_order() {

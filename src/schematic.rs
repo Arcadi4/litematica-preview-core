@@ -282,7 +282,7 @@ fn parse_entity(compound: &NbtCompound) -> Result<Entity, String> {
 mod tests {
     use super::*;
     use nucleation::formats::schematic::from_schematic_bounded;
-    use quartz_nbt::io::{write_nbt, Flavor};
+    use quartz_nbt::io::{Flavor, write_nbt};
 
     fn fixture(
         version: i32,
@@ -389,11 +389,13 @@ mod tests {
                 "{data:?}"
             );
         }
-        assert!(read(
-            &encode(&fixture(2, &palette, &[0], (2, 1, 1))),
-            &DecodeLimits::default()
-        )
-        .is_err());
+        assert!(
+            read(
+                &encode(&fixture(2, &palette, &[0], (2, 1, 1))),
+                &DecodeLimits::default()
+            )
+            .is_err()
+        );
         let mut maximum: &[i8] = &[-1, -1, -1, -1, 15];
         assert_eq!(read_varint(&mut maximum).unwrap(), u32::MAX);
         assert!(maximum.is_empty());
@@ -406,11 +408,13 @@ mod tests {
             vec![("minecraft:stone", i32::MAX)],
             vec![("minecraft:stone", 0), ("minecraft:dirt", 0)],
         ] {
-            assert!(read(
-                &encode(&fixture(2, &palette, &[0], (1, 1, 1))),
-                &DecodeLimits::default()
-            )
-            .is_err());
+            assert!(
+                read(
+                    &encode(&fixture(2, &palette, &[0], (1, 1, 1))),
+                    &DecodeLimits::default()
+                )
+                .is_err()
+            );
         }
         let mut sparse = fixture(2, &[("minecraft:stone", 2)], &[1], (1, 1, 1));
         sparse.insert("PaletteMax", 3i32);

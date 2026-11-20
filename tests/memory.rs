@@ -2,7 +2,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use litematica_preview_core::{decode, load_chunks, PreviewOptions};
+use litematica_preview_core::{PreviewOptions, decode, load_chunks};
 use quartz_nbt::{NbtCompound, NbtList, NbtTag};
 
 #[path = "../src/meshing/tests/fixtures.rs"]

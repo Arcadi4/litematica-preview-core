@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 use schematic_mesher::mesh_output::GreedyMaterialOutput;
-use schematic_mesher::mesher::{element::MeshBuilder, face_culler::FaceCuller, liquid, Mesh};
+use schematic_mesher::mesher::{Mesh, element::MeshBuilder, face_culler::FaceCuller, liquid};
 use schematic_mesher::resolver::{ModelResolver, StateResolver};
 use schematic_mesher::{
     BlockPosition, BoundingBox, InputBlock, MeshLayer, MeshOutput, MesherConfig, ResourcePack,
