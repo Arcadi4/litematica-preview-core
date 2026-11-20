@@ -481,7 +481,7 @@ fn malicious_array_list_lengths_and_excessive_nesting_fail_recoverably() {
     for _ in 0..80 {
         nested.extend_from_slice(&[10, 0, 0]);
     }
-    nested.extend(std::iter::repeat(0).take(81));
+    nested.extend(std::iter::repeat_n(0, 81));
     rejected(&with_invalid_tail(10, &nested), &pack);
 }
 
