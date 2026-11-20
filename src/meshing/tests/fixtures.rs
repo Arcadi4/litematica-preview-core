@@ -78,7 +78,7 @@ pub(crate) fn test_pack_with_font(font: Option<(u32, u32, Vec<u8>)>) -> Resource
         );
         if name != "unknown_texture" {
             let mut pixels = vec![255; 16 * 16 * 4];
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 pixel[3] = alpha;
             }
             // A real cutout texture contains both transparent and opaque pixels.

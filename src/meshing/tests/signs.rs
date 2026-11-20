@@ -162,15 +162,15 @@ fn mesh_decoded_boards(
     collect_boards(fixtures, meshes)
 }
 
-fn collect_boards(fixtures: &[Fixture], mut meshes: super::super::ChunkMeshes<'_>) -> Vec<Board> {
+fn collect_boards(fixtures: &[Fixture], meshes: super::super::ChunkMeshes<'_>) -> Vec<Board> {
     let mut boards = vec![Board::default(); fixtures.len()];
-    while let Some(mesh) = meshes.next() {
+    for mesh in meshes {
         let mesh = mesh.unwrap();
         let Some(font) = mesh.atlas.get_region(super::super::sign_board::FONT_TILE) else {
             continue;
         };
         for (layer, _, _) in parts(&mesh) {
-            for triangle in layer.indices.chunks_exact(3) {
+            for triangle in layer.indices.as_chunks::<3>().0 {
                 let inside = triangle.iter().all(|&index| {
                     let uv = layer.uvs[index as usize];
                     uv[0] >= font.u_min - 1e-6
@@ -689,10 +689,10 @@ fn threaded_sign_meshing_matches_serial() {
         let source =
             CompactBlocks::from_schematic(world.clone(), Some(16), threads, false, &|| Ok(()))
                 .unwrap();
-        let mut meshes =
+        let meshes =
             super::super::ChunkMeshes::from_source(&source, &pack, &config, &|| Ok(())).unwrap();
         let mut all = Vec::new();
-        while let Some(mesh) = meshes.next() {
+        for mesh in meshes {
             let mesh = mesh.unwrap();
             all.append(&mut triangles(&mesh));
         }
