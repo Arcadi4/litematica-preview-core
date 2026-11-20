@@ -2,7 +2,7 @@ name: Release
 on:
   push:
     tags:
-      - core-v*
+      - v*
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,10 +19,10 @@ jobs:
       # consumer asked for, so the two are checked before anything is uploaded.
       - name: Check the tag matches the manifest
         run: |
-          tag="${GITHUB_REF_NAME#core-v}"
+          tag="${GITHUB_REF_NAME#v}"
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           if [[ "$tag" != "$version" ]]; then
-            echo "::error::Tag core-v${tag} does not match crate version ${version}"
+            echo "::error::Tag v${tag} does not match crate version ${version}"
             exit 1
           fi
       - name: Check format
