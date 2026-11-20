@@ -1,6 +1,6 @@
 [package]
 name = "litematica-preview-core"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 rust-version = "1.100"
 description = "Bounded Minecraft schematic decoding and streaming mesh generation"
