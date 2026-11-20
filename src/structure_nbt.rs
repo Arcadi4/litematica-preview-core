@@ -50,10 +50,10 @@ fn load_structure_nbt(
     if blocks.len() > volume {
         return Err(unreadable());
     }
-    if let Some(NbtTag::List(entities)) = root.inner().get("entities") {
-        if entities.len() > limits.max_entities {
-            return Err(DecodeFailure::Limit("entity limit exceeded".into()));
-        }
+    if let Some(NbtTag::List(entities)) = root.inner().get("entities")
+        && entities.len() > limits.max_entities
+    {
+        return Err(DecodeFailure::Limit("entity limit exceeded".into()));
     }
     let block_entities = blocks.iter().filter(|entry| {
         matches!(entry, NbtTag::Compound(entry) if matches!(entry.inner().get("nbt"), Some(NbtTag::Compound(_))))

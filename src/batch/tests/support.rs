@@ -332,18 +332,18 @@ pub fn assert_same_triangles(actual: &[Triangle], expected: &[Triangle], toleran
                             base[2].saturating_add(z),
                         ],
                     );
-                    if let Some(candidates) = buckets.get_mut(&key) {
-                        if let Some(candidate) = candidates.iter().position(|candidate| {
+                    if let Some(candidates) = buckets.get_mut(&key)
+                        && let Some(candidate) = candidates.iter().position(|candidate| {
                             ORDERS.iter().any(|order| {
                                 (0..3).all(|vertex| {
                                     close(&triangle[vertex], &candidate[order[vertex]])
                                 })
                             })
-                        }) {
-                            candidates.swap_remove(candidate);
-                            matched = true;
-                            break 'search;
-                        }
+                        })
+                    {
+                        candidates.swap_remove(candidate);
+                        matched = true;
+                        break 'search;
                     }
                 }
             }

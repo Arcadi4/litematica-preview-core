@@ -111,10 +111,8 @@ impl PreviewOptions {
                 return Err(format!("The worker thread count must be from 2 to {max}."));
             }
         }
-        if self.speed_first {
-            if self.thread_count.is_none() {
-                return Err("Speed-first preview requires multithreading to be enabled.".into());
-            }
+        if self.speed_first && self.thread_count.is_none() {
+            return Err("Speed-first preview requires multithreading to be enabled.".into());
         }
         Ok(())
     }

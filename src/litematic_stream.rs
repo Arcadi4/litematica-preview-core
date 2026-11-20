@@ -945,17 +945,19 @@ fn visit<F: Fn() -> Result<(), String>>(
             region.min.1 + (index / region.plane) as i32,
             region.min.2 + ((index / region.width) % region.length) as i32,
         );
-        if !region.heads.is_empty() && player_heads::is_player_head(&state.name) {
-            if let Some(profile) = region.heads.get(&(position.x, position.y, position.z)) {
-                builder.push_head(position, state, profile, true)?;
-                continue;
-            }
+        if !region.heads.is_empty()
+            && player_heads::is_player_head(&state.name)
+            && let Some(profile) = region.heads.get(&(position.x, position.y, position.z))
+        {
+            builder.push_head(position, state, profile, true)?;
+            continue;
         }
-        if !region.signs.is_empty() && sign_text::is_sign(&state.name) {
-            if let Some(text) = region.signs.get(&(position.x, position.y, position.z)) {
-                builder.push_sign(position, state, text, true)?;
-                continue;
-            }
+        if !region.signs.is_empty()
+            && sign_text::is_sign(&state.name)
+            && let Some(text) = region.signs.get(&(position.x, position.y, position.z))
+        {
+            builder.push_sign(position, state, text, true)?;
+            continue;
         }
         builder.push_block(position, &region.mapping[palette_index])?;
     }
@@ -1023,17 +1025,19 @@ fn visit_parallel<F: Fn() -> Result<(), String>>(
                 );
                 let palette_index = u32::try_from(palette_index)
                     .map_err(|_| "packed block palette index exceeds u32")?;
-                if !region.heads.is_empty() && player_heads::is_player_head(&state.name) {
-                    if let Some(profile) = region.heads.get(&(position.x, position.y, position.z)) {
-                        heads.push((position, state.clone(), profile.clone()));
-                        continue;
-                    }
+                if !region.heads.is_empty()
+                    && player_heads::is_player_head(&state.name)
+                    && let Some(profile) = region.heads.get(&(position.x, position.y, position.z))
+                {
+                    heads.push((position, state.clone(), profile.clone()));
+                    continue;
                 }
-                if !region.signs.is_empty() && sign_text::is_sign(&state.name) {
-                    if let Some(text) = region.signs.get(&(position.x, position.y, position.z)) {
-                        signs.push((position, state.clone(), text.clone()));
-                        continue;
-                    }
+                if !region.signs.is_empty()
+                    && sign_text::is_sign(&state.name)
+                    && let Some(text) = region.signs.get(&(position.x, position.y, position.z))
+                {
+                    signs.push((position, state.clone(), text.clone()));
+                    continue;
                 }
                 blocks.push((position, palette_index));
             }

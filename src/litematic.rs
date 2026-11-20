@@ -272,15 +272,15 @@ fn read_region_extras(
             ("Entities", NbtTag::List(entities)) => {
                 for tag in entities.into_inner() {
                     current()?;
-                    if let NbtTag::Compound(entity) = tag {
-                        if let Ok(mut entity) = Entity::from_nbt(&entity) {
-                            // Entity positions use the signed region origin; block
-                            // entities use the region's minimum corner.
-                            entity.position.0 += f64::from(origin.0);
-                            entity.position.1 += f64::from(origin.1);
-                            entity.position.2 += f64::from(origin.2);
-                            push_entity(entity)?;
-                        }
+                    if let NbtTag::Compound(entity) = tag
+                        && let Ok(mut entity) = Entity::from_nbt(&entity)
+                    {
+                        // Entity positions use the signed region origin; block
+                        // entities use the region's minimum corner.
+                        entity.position.0 += f64::from(origin.0);
+                        entity.position.1 += f64::from(origin.1);
+                        entity.position.2 += f64::from(origin.2);
+                        push_entity(entity)?;
                     }
                 }
             }
@@ -394,10 +394,10 @@ fn metadata(root: &NbtCompound, schematic: &mut UniversalSchematic) -> Result<()
         .ok()
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default();
-    if let Ok(json) = metadata.get::<_, &str>("NucleationDefinitions") {
-        if let Ok(regions) = serde_json::from_str(json) {
-            schematic.definition_regions = regions;
-        }
+    if let Ok(json) = metadata.get::<_, &str>("NucleationDefinitions")
+        && let Ok(regions) = serde_json::from_str(json)
+    {
+        schematic.definition_regions = regions;
     }
     Ok(())
 }

@@ -100,10 +100,10 @@ pub(super) fn read(data: &[u8], limits: &DecodeLimits) -> Result<UniversalSchema
             .ok()
             .and_then(|json| serde_json::from_str(json).ok())
             .unwrap_or_default();
-        if let Ok(json) = metadata.get::<_, &str>("NucleationDefinitions") {
-            if let Ok(definitions) = serde_json::from_str(json) {
-                schematic.definition_regions = definitions;
-            }
+        if let Ok(json) = metadata.get::<_, &str>("NucleationDefinitions")
+            && let Ok(definitions) = serde_json::from_str(json)
+        {
+            schematic.definition_regions = definitions;
         }
         schematic.metadata.cell_contract = metadata
             .get::<_, &str>("NucleationCellContract")
