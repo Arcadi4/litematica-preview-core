@@ -18,6 +18,7 @@ mod fixtures;
 /// One triangle of decoded upload geometry, in the same shape the dense
 /// baseline uses.
 type Triangle = support::Triangle;
+type Triangles = Vec<(Option<(i32, i32, i32)>, Vec<Triangle>)>;
 
 fn triple(values: [i32; 3]) -> NbtCompound {
     let mut result = NbtCompound::new();
@@ -480,7 +481,7 @@ fn malicious_array_list_lengths_and_excessive_nesting_fail_recoverably() {
     for _ in 0..80 {
         nested.extend_from_slice(&[10, 0, 0]);
     }
-    nested.extend(std::iter::repeat(0).take(81));
+    nested.extend(std::iter::repeat_n(0, 81));
     rejected(&with_invalid_tail(10, &nested), &pack);
 }
 
@@ -602,7 +603,7 @@ fn threaded_preview(
     pack: &ResourcePackSource,
     thread_count: Option<u8>,
     speed_first: bool,
-) -> (PreviewInfo, Vec<(Option<(i32, i32, i32)>, Vec<Triangle>)>) {
+) -> (PreviewInfo, Triangles) {
     let mut chunks = Vec::new();
     let info = load_chunks(
         bytes,

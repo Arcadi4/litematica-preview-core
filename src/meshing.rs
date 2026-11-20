@@ -1056,18 +1056,18 @@ impl<'a> ChunkMeshes<'a> {
         // Unpack once, exactly sized: the mesher consumes absolute positions,
         // and a batch's blocks are a few hundred kilobytes either way.
         let blocks: Vec<(BlockPosition, u32)> = chunk.records(origin).collect();
-        let mut mesh = builder::mesh(
-            self.pack,
-            &self.config,
-            &self.atlas,
-            &self.source.palette,
-            &self.atlas_only,
-            &self.wet,
-            &blocks,
-            &context,
+        let mut mesh = builder::mesh(builder::MeshParams {
+            pack: self.pack,
+            config: &self.config,
+            shared_atlas: &self.atlas,
+            palette: &self.source.palette,
+            atlas_only: &self.atlas_only,
+            wet: &self.wet,
+            blocks: &blocks,
+            context: &context,
             entities,
             bounds,
-        )?;
+        })?;
         mesh.chunk_coord = self.source.chunk_size.map(|_| *coord);
         Ok(mesh)
     }
@@ -1273,19 +1273,18 @@ fn entity_to_input_block(entity: &Entity) -> InputBlock {
                 .insert("item_rotation".into(), (*rotation as u8 & 7).to_string());
         }
     }
-    if !input.properties.contains_key("facing") {
-        if let Some(NbtValue::List(rotation)) = entity.nbt.get("Rotation") {
-            if let Some(NbtValue::Float(yaw)) = rotation.first() {
-                input
-                    .properties
-                    .insert("facing".into(), yaw_to_facing(*yaw).into());
-            }
-        }
+    if !input.properties.contains_key("facing")
+        && let Some(NbtValue::List(rotation)) = entity.nbt.get("Rotation")
+        && let Some(NbtValue::Float(yaw)) = rotation.first()
+    {
+        input
+            .properties
+            .insert("facing".into(), yaw_to_facing(*yaw).into());
     }
-    if let Some(NbtValue::Compound(item)) = entity.nbt.get("Item") {
-        if let Some(NbtValue::String(id)) = item.get("id") {
-            input.properties.insert("item".into(), id.clone());
-        }
+    if let Some(NbtValue::Compound(item)) = entity.nbt.get("Item")
+        && let Some(NbtValue::String(id)) = item.get("id")
+    {
+        input.properties.insert("item".into(), id.clone());
     }
     if matches!(entity.nbt.get("IsBaby"), Some(NbtValue::Byte(1)))
         || matches!(entity.nbt.get("Age"), Some(NbtValue::Int(age)) if *age < 0)
@@ -1326,10 +1325,10 @@ fn entity_to_input_block(entity: &Entity) -> InputBlock {
             .iter()
             .enumerate()
         {
-            if let Some(NbtValue::Compound(item)) = items.get(index) {
-                if let Some(NbtValue::String(id)) = item.get("id") {
-                    input.properties.insert((*property).into(), id.clone());
-                }
+            if let Some(NbtValue::Compound(item)) = items.get(index)
+                && let Some(NbtValue::String(id)) = item.get("id")
+            {
+                input.properties.insert((*property).into(), id.clone());
             }
         }
     }

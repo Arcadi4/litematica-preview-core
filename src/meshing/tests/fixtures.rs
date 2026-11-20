@@ -78,7 +78,7 @@ pub(crate) fn test_pack_with_font(font: Option<(u32, u32, Vec<u8>)>) -> Resource
         );
         if name != "unknown_texture" {
             let mut pixels = vec![255; 16 * 16 * 4];
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 pixel[3] = alpha;
             }
             // A real cutout texture contains both transparent and opaque pixels.
@@ -165,6 +165,8 @@ pub(crate) fn test_pack_with_font(font: Option<(u32, u32, Vec<u8>)>) -> Resource
     ResourcePackSource::from_resource_pack(pack)
 }
 
+// Shared by lib and integration test targets; unused by some targets.
+#[allow(dead_code)]
 pub(crate) fn schematic(blocks: &[(i32, i32, i32, &str)]) -> UniversalSchematic {
     let mut schematic = UniversalSchematic::new("chunk regression".into());
     for &(x, y, z, name) in blocks {

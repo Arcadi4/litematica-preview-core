@@ -236,10 +236,10 @@ fn component(value: &serde_json::Value, text: &mut String, color: &mut Option<St
             }
         }
         serde_json::Value::Object(map) => {
-            if color.is_none() {
-                if let Some(serde_json::Value::String(name)) = map.get("color") {
-                    *color = Some(name.clone());
-                }
+            if color.is_none()
+                && let Some(serde_json::Value::String(name)) = map.get("color")
+            {
+                *color = Some(name.clone());
             }
             if let Some(serde_json::Value::String(plain)) = map.get("text") {
                 text.push_str(plain);
@@ -580,10 +580,11 @@ fn truncate(text: &str, max: f32, advance: impl Fn(char) -> f32) -> String {
         end = index + character.len_utf8();
     }
     let mut kept = &text[..end];
-    if end < text.len() && !text[end..].starts_with(' ') {
-        if let Some(space) = kept.rfind(' ') {
-            kept = &kept[..space];
-        }
+    if end < text.len()
+        && !text[end..].starts_with(' ')
+        && let Some(space) = kept.rfind(' ')
+    {
+        kept = &kept[..space];
     }
     kept.trim_end_matches(' ').to_owned()
 }

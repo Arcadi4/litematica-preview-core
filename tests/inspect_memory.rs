@@ -38,7 +38,7 @@ static EVENTS: [Event; SLOTS] = [const {
 /// Keep allocator callbacks allocation-, formatting-, lock-, and panic-free.
 /// Broken accounting is reported after measurement rather than inside the allocator.
 fn adjust(bytes: usize, increase: bool) -> usize {
-    match LIVE.fetch_update(SeqCst, SeqCst, |live| {
+    match LIVE.try_update(SeqCst, SeqCst, |live| {
         if increase {
             live.checked_add(bytes)
         } else {
@@ -61,7 +61,7 @@ fn adjust(bytes: usize, increase: bool) -> usize {
 
 fn event(kind: usize, bytes: usize, live: usize) {
     if ACTIVE.load(SeqCst) && bytes >= LARGE {
-        match NEXT.fetch_update(SeqCst, SeqCst, |next| {
+        match NEXT.try_update(SeqCst, SeqCst, |next| {
             if next < SLOTS { Some(next + 1) } else { None }
         }) {
             Ok(slot) => {
@@ -70,7 +70,7 @@ fn event(kind: usize, bytes: usize, live: usize) {
                 EVENTS[slot].kind.store(kind, SeqCst);
             }
             Err(_) => {
-                let _ = DROPPED.fetch_update(SeqCst, SeqCst, |count| Some(count.saturating_add(1)));
+                let _ = DROPPED.try_update(SeqCst, SeqCst, |count| Some(count.saturating_add(1)));
             }
         }
     }

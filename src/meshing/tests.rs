@@ -10,7 +10,7 @@ use fixtures::{schematic, test_pack};
 fn area(mesh: &MeshOutput) -> f64 {
     parts(mesh)
         .flat_map(|(layer, _, _)| {
-            layer.indices.chunks_exact(3).map(move |indices| {
+            layer.indices.as_chunks::<3>().0.iter().map(move |indices| {
                 let a = layer.positions[indices[0] as usize];
                 let b = layer.positions[indices[1] as usize];
                 let c = layer.positions[indices[2] as usize];
@@ -33,7 +33,7 @@ type TriangleSignature = (u32, [VertexSignature; 3]);
 fn triangles(mesh: &MeshOutput) -> Vec<TriangleSignature> {
     let mut result = Vec::new();
     for (layer, _, alpha) in parts(mesh) {
-        for indices in layer.indices.chunks_exact(3) {
+        for indices in layer.indices.as_chunks::<3>().0 {
             let mut vertices = [[0; 10]; 3];
             for (slot, &index) in vertices.iter_mut().zip(indices) {
                 let index = index as usize;
@@ -68,7 +68,10 @@ fn with_meshes<R>(
     inspect(&mut meshes)
 }
 
-fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> Vec<((i32, i32, i32), String)> {
+type Position = (i32, i32, i32);
+type ChunkEntries = Vec<(Position, String)>;
+
+fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> ChunkEntries {
     let chunk = &source.chunks[source
         .chunks
         .binary_search_by_key(&coord, |(coord, _, _)| *coord)
@@ -88,8 +91,8 @@ fn occupied(source: &CompactBlocks, coord: ChunkCoord) -> Vec<((i32, i32, i32), 
 fn grouped_by_chunk(
     positions: &[(i32, i32, i32, &str)],
     size: i32,
-) -> Vec<(ChunkCoord, Vec<((i32, i32, i32), String)>)> {
-    let mut grouped: HashMap<ChunkCoord, Vec<((i32, i32, i32), String)>> = HashMap::new();
+) -> Vec<(ChunkCoord, ChunkEntries)> {
+    let mut grouped: HashMap<ChunkCoord, ChunkEntries> = HashMap::new();
     for &(x, y, z, name) in positions {
         let coord = chunk_coord(BlockPosition::new(x, y, z), size);
         grouped
@@ -121,7 +124,7 @@ fn adjacent_core_blocks_have_no_hidden_boundary_faces_with_greedy() {
                     .any(|m| !m.opaque.indices.is_empty())
             );
             for (layer, _, _) in parts(&mesh) {
-                for indices in layer.indices.chunks_exact(3) {
+                for indices in layer.indices.as_chunks::<3>().0 {
                     assert!(
                         !indices
                             .iter()
@@ -758,18 +761,18 @@ fn generated_texture_cannot_repack_an_already_shared_atlas() {
     let atlas = atlas::build(pack.pack(), &config, std::iter::empty()).unwrap();
     let position = BlockPosition::new(0, 0, 0);
     let palette = [block];
-    let result = builder::mesh(
-        pack.pack(),
-        &config,
-        &atlas,
-        &palette,
-        &[false],
-        &[builder::wet(&palette[0])],
-        &[(position, 0)],
-        &[(position, &palette[0])],
-        &[],
-        BoundingBox::new([0.0; 3], [1.0; 3]),
-    );
+    let result = builder::mesh(builder::MeshParams {
+        pack: pack.pack(),
+        config: &config,
+        shared_atlas: &atlas,
+        palette: &palette,
+        atlas_only: &[false],
+        wet: &[builder::wet(&palette[0])],
+        blocks: &[(position, 0)],
+        context: &[(position, &palette[0])],
+        entities: &[],
+        bounds: BoundingBox::new([0.0; 3], [1.0; 3]),
+    });
     assert!(
         result.is_err(),
         "a late generated texture must never change earlier chunks' UV layout"
@@ -1000,7 +1003,7 @@ fn block_geometry(source: &CompactBlocks, block: (i32, i32, i32)) -> Vec<[f32; 3
     let mut points = Vec::new();
     while let Some(mesh) = meshes.next().transpose().unwrap() {
         for (layer, _, _) in parts(&mesh) {
-            for triangle in layer.indices.chunks_exact(3) {
+            for triangle in layer.indices.as_chunks::<3>().0 {
                 let vertices = [
                     offset(&layer.positions[triangle[0] as usize]),
                     offset(&layer.positions[triangle[1] as usize]),
@@ -1165,7 +1168,9 @@ fn fluids_precede_panes_in_the_blended_layer() {
             let layer = &mesh.transparent;
             let is_water: Vec<bool> = layer
                 .indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|triangle| {
                     let x = triangle
                         .iter()
@@ -1421,7 +1426,7 @@ fn sign_text_draws_glyphs_from_the_shared_font_tile() {
                 continue;
             };
             chunks_seen += 1;
-            for indices in mesh.cutout.indices.chunks_exact(3) {
+            for indices in mesh.cutout.indices.as_chunks::<3>().0 {
                 let inside = indices.iter().all(|&index| {
                     let uv = mesh.cutout.uvs[index as usize];
                     uv[0] >= font.u_min - 1e-6
@@ -1540,7 +1545,7 @@ fn overlong_board_text_stops_at_the_board_edge() {
                 .get_region(super::sign_board::FONT_TILE)
                 .expect("the font tile reaches the mesh atlas");
             for (layer, _, _) in parts(&mesh) {
-                for triangle in layer.indices.chunks_exact(3) {
+                for triangle in layer.indices.as_chunks::<3>().0 {
                     let vertices: [[f32; 3]; 3] =
                         std::array::from_fn(|slot| layer.positions[triangle[slot] as usize]);
                     let in_font = triangle.iter().all(|&index| {
@@ -1658,7 +1663,7 @@ fn board_text_uses_vanilla_ink_and_outline_colors() {
                 continue;
             };
             for (layer, _, _) in parts(&mesh) {
-                for indices in layer.indices.chunks_exact(3) {
+                for indices in layer.indices.as_chunks::<3>().0 {
                     let inside = indices.iter().all(|&index| {
                         let uv = layer.uvs[index as usize];
                         uv[0] >= font.u_min - 1e-6

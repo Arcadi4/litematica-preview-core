@@ -131,7 +131,7 @@ fn extend_triangles(result: &mut Vec<Triangle>, layer: &MeshLayer, alpha: u32) {
     if layer.indices.is_empty() {
         return;
     }
-    for indices in layer.indices.chunks_exact(3) {
+    for indices in layer.indices.as_chunks::<3>().0 {
         let mut vertices = [[0.0; 10]; 3];
         for (slot, &index) in vertices.iter_mut().zip(indices) {
             let index = index as usize;
@@ -160,7 +160,7 @@ pub fn packed_triangles(batch: &MeshBatch) -> Vec<Triangle> {
         let vertices: Vec<[f64; 10]> = (0..part.vertex_count as usize)
             .map(|index| decode_vertex(batch, part.vertex_offset + index * stride))
             .collect();
-        for indices in part_indices(batch, part).chunks_exact(3) {
+        for indices in part_indices(batch, part).as_chunks::<3>().0 {
             let mut triangle = [
                 vertices[indices[0] as usize],
                 vertices[indices[1] as usize],
@@ -235,12 +235,16 @@ pub fn part_indices(batch: &MeshBatch, part: &MeshPart) -> Vec<u32> {
     let bytes = &batch.geometry[part.index_offset..part.index_offset + length];
     match part.index_size {
         2 => bytes
-            .chunks_exact(2)
-            .map(|bytes| u32::from(u16::from_le_bytes([bytes[0], bytes[1]])))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|bytes| u32::from(u16::from_le_bytes(*bytes)))
             .collect(),
         _ => bytes
-            .chunks_exact(4)
-            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| u32::from_le_bytes(*bytes))
             .collect(),
     }
 }
@@ -259,7 +263,7 @@ pub fn sort_triangles(triangles: &mut [Triangle]) {
 }
 
 fn sort_vertices(vertices: &mut [[f64; 10]; 3]) {
-    vertices.sort_unstable_by(|left, right| compare_slots(left, right));
+    vertices.sort_unstable_by(compare_slots);
 }
 
 fn compare_slots(left: &[f64; 10], right: &[f64; 10]) -> std::cmp::Ordering {
@@ -332,18 +336,18 @@ pub fn assert_same_triangles(actual: &[Triangle], expected: &[Triangle], toleran
                             base[2].saturating_add(z),
                         ],
                     );
-                    if let Some(candidates) = buckets.get_mut(&key) {
-                        if let Some(candidate) = candidates.iter().position(|candidate| {
+                    if let Some(candidates) = buckets.get_mut(&key)
+                        && let Some(candidate) = candidates.iter().position(|candidate| {
                             ORDERS.iter().any(|order| {
                                 (0..3).all(|vertex| {
                                     close(&triangle[vertex], &candidate[order[vertex]])
                                 })
                             })
-                        }) {
-                            candidates.swap_remove(candidate);
-                            matched = true;
-                            break 'search;
-                        }
+                        })
+                    {
+                        candidates.swap_remove(candidate);
+                        matched = true;
+                        break 'search;
                     }
                 }
             }

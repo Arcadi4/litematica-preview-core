@@ -81,18 +81,33 @@ enum Pass {
     Atlas,
 }
 
-pub(super) fn mesh(
-    pack: &ResourcePack,
-    config: &MesherConfig,
-    shared_atlas: &TextureAtlas,
-    palette: &[InputBlock],
-    atlas_only: &[bool],
-    wet: &[Wet],
-    blocks: &[(BlockPosition, u32)],
-    context: &[(BlockPosition, &InputBlock)],
-    entities: &[EntityInstance],
-    bounds: BoundingBox,
-) -> Result<MeshOutput, String> {
+/// The borrowed inputs for one mesh build, named at the call site.
+pub(super) struct MeshParams<'a> {
+    pub(super) pack: &'a ResourcePack,
+    pub(super) config: &'a MesherConfig,
+    pub(super) shared_atlas: &'a TextureAtlas,
+    pub(super) palette: &'a [InputBlock],
+    pub(super) atlas_only: &'a [bool],
+    pub(super) wet: &'a [Wet],
+    pub(super) blocks: &'a [(BlockPosition, u32)],
+    pub(super) context: &'a [(BlockPosition, &'a InputBlock)],
+    pub(super) entities: &'a [EntityInstance],
+    pub(super) bounds: BoundingBox,
+}
+
+pub(super) fn mesh(params: MeshParams<'_>) -> Result<MeshOutput, String> {
+    let MeshParams {
+        pack,
+        config,
+        shared_atlas,
+        palette,
+        atlas_only,
+        wet,
+        blocks,
+        context,
+        entities,
+        bounds,
+    } = params;
     // All halo entries participate in neighbor queries; only `blocks` are emitted.
     if config.cull_hidden_faces {
         validate_culler_grid(context)?;

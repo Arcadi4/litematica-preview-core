@@ -69,12 +69,12 @@ pub(super) fn build<'a>(
             }
             // Synthetic `_` keys must use generated textures rather than
             // resource-pack entries with the same name.
-            if !path.starts_with('_') {
-                if let Some(texture) = pack.get_texture(path) {
-                    tiles.push((path.clone(), texture.first_frame()));
-                    discovered.insert(path.clone());
-                    continue;
-                }
+            if !path.starts_with('_')
+                && let Some(texture) = pack.get_texture(path)
+            {
+                tiles.push((path.clone(), texture.first_frame()));
+                discovered.insert(path.clone());
+                continue;
             }
             needs_local_atlas = true;
         }
@@ -87,10 +87,8 @@ pub(super) fn build<'a>(
             collect_tiles(local, &mut tiles, &mut discovered)?;
         }
     }
-    if boards {
-        if let Some(font) = super::sign_board::font_tile(pack) {
-            tiles.push((super::sign_board::FONT_TILE.to_owned(), font));
-        }
+    if boards && let Some(font) = super::sign_board::font_tile(pack) {
+        tiles.push((super::sign_board::FONT_TILE.to_owned(), font));
     }
     pack_tiles(tiles, config.atlas_max_size, config.atlas_padding)
 }

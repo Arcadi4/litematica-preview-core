@@ -50,10 +50,10 @@ fn load_structure_nbt(
     if blocks.len() > volume {
         return Err(unreadable());
     }
-    if let Some(NbtTag::List(entities)) = root.inner().get("entities") {
-        if entities.len() > limits.max_entities {
-            return Err(DecodeFailure::Limit("entity limit exceeded".into()));
-        }
+    if let Some(NbtTag::List(entities)) = root.inner().get("entities")
+        && entities.len() > limits.max_entities
+    {
+        return Err(DecodeFailure::Limit("entity limit exceeded".into()));
     }
     let block_entities = blocks.iter().filter(|entry| {
         matches!(entry, NbtTag::Compound(entry) if matches!(entry.inner().get("nbt"), Some(NbtTag::Compound(_))))
@@ -76,7 +76,7 @@ fn load_structure_nbt(
         (0, 0, 0),
         (size[0], size[1], size[2]),
     )
-    .map_err(|error| DecodeFailure::Format(format!("{error}")))?;
+    .map_err(|error| DecodeFailure::Format(error.to_string()))?;
 
     for entry in blocks.iter() {
         let NbtTag::Compound(entry) = entry else {
@@ -102,7 +102,7 @@ fn load_structure_nbt(
         };
 
         let block = BlockState::from_block_string(state)
-            .map_err(|error| DecodeFailure::Format(format!("{error}")))?;
+            .map_err(|error| DecodeFailure::Format(error.to_string()))?;
         let (x, y, z) = (position[0], position[1], position[2]);
         schematic.set_block(x, y, z, &block);
 
