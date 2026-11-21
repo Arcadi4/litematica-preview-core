@@ -50,6 +50,9 @@ path = "tests/meshing.rs"
 name = "streaming"
 path = "tests/streaming.rs"
 
+[lints.cargo]
+unused_dependencies = "warn"
+
 # Debug info is the most expensive part of an unoptimized build. Line tables
 # keep a host's panic locations readable; dependency debug info is never
 # read, so none of it is generated. The release profile is unaffected.
