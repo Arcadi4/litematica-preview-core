@@ -153,7 +153,7 @@ fn load_structure_nbt(
 /// Read an `[i32; 3]` from an int array or a list of integer-like tags.
 fn triple(compound: &NbtCompound, key: &str) -> Option<[i32; 3]> {
     match compound.inner().get(key)? {
-        NbtTag::IntArray(values) => values.as_slice().try_into().ok(),
+        NbtTag::IntArray(values) => values.as_slice().as_array::<3>().copied(),
         NbtTag::List(list) if list.len() == 3 => {
             let mut out = [0; 3];
             for (index, entry) in list.iter().enumerate() {
