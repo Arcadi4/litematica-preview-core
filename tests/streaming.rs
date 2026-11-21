@@ -52,7 +52,7 @@ fn region(
         .into_iter()
         .map(|axis| axis.unsigned_abs() as usize)
         .product();
-    let bits = (usize::BITS - (palette.len() - 1).leading_zeros()).max(2) as usize;
+    let bits = (palette.len() - 1).bit_width().max(2) as usize;
     let mut result = NbtCompound::new();
     // Deliberately precedes every field needed to interpret these words.
     result.insert(

@@ -120,7 +120,7 @@ fn preflight(
             };
             palette.push(BlockState::from_nbt(&state)?);
         }
-        let bits = (usize::BITS - (palette.len() - 1).leading_zeros()).max(2) as usize;
+        let bits = (palette.len() - 1).bit_width().max(2) as usize;
         if bits > u64::BITS as usize {
             return Err("palette index exceeds packed state representation".into());
         }
@@ -408,7 +408,7 @@ mod tests {
     use std::cell::Cell;
 
     fn root_with_indices(palette: &[BlockState], indices: &[usize]) -> NbtCompound {
-        let bits = (usize::BITS - (palette.len() - 1).leading_zeros()).max(2) as usize;
+        let bits = (palette.len() - 1).bit_width().max(2) as usize;
         let mut packed = vec![0i64; (indices.len() * bits).div_ceil(64)];
         for (index, &state) in indices.iter().enumerate() {
             for bit in 0..bits {

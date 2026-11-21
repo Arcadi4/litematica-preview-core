@@ -835,7 +835,7 @@ fn prepare(
         let palette = fields
             .palette
             .ok_or("missing Litematic BlockStatePalette")??;
-        let bits = (usize::BITS - (palette.len() - 1).leading_zeros()).max(2);
+        let bits = (palette.len() - 1).bit_width().max(2);
         let packed = fields.packed.ok_or("missing Litematic BlockStates")?;
         let total_bits = volume
             .checked_mul(bits as usize)
