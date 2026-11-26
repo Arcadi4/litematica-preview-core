@@ -624,7 +624,7 @@ dependencies = [
  "rustc-hash",
  "schematic-mesher",
  "serde_json",
- "zip 9.8.1",
+ "zip 9.8.2",
 ]
 
 [[package]]
@@ -707,9 +707,9 @@ dependencies = [
 
 [[package]]
 name = "nucleation"
-version = "0.12.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed0201a93585b97870b2bcf760af54d15437afecfabb1fb6db0ffde39c84673b"
+checksum = "874c2fca903211a8a9952a7ba32a9f1cb99439f5fcb46a021c5667a8f08692cc"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1610,9 +1610,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.8.1"
+version = "9.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9534624d547e3f516ecde0ed9a70d37788f01d340efcfdd03bf3ea8e163c1d0"
+checksum = "2d8dbe089cf6b0448b78f5fc50139ab5aaa40d08ac07cdc1baf2c13add35fcce"
 dependencies = [
  "constant_time_eq 0.6.1",
  "crc32fast",
